@@ -161,6 +161,10 @@ const visitors = {
         break;
       }
       case "useNavigate": {
+        /*
+         * 1. Creata a new variableDeclaration with useRouter
+         * 2. Unshift useRouter to first line of block
+         */
         const useRouterVar = t.variableDeclarator(
           t.identifier("router"),
           t.callExpression(t.identifier("useRouter"), []),
@@ -171,6 +175,53 @@ const visitors = {
         path
           .findParent((p) => p.isBlockStatement())
           .unshiftContainer("body", useRouterDeclaration);
+
+        // Replace original variableDeclaration from useNavigate() to router
+        const navigatDeclarator = path.findParent((p) =>
+          p.isVariableDeclarator(),
+        );
+        const referencePaths =
+          navigatDeclarator.scope.bindings[navigatDeclarator.node.id.name]
+            ?.referencePaths || [];
+
+        inspect({
+          message: "navigatDeclarator",
+          value: referencePaths[0]?.container,
+          options: { depth: 2 },
+        });
+
+        referencePaths?.forEach((path) => {
+          const navigateCallExpressionNode = path.container;
+          const method =
+            navigateCallExpressionNode.arguments[1]?.properties?.find(
+              (p) => p?.key?.name === "replace",
+            ) || "push";
+          navigateCallExpressionNode.callee = t.memberExpression(
+            t.identifier("router"),
+            t.identifier(method),
+          );
+          const query =
+            navigateCallExpressionNode.arguments[1]?.properties?.find(
+              (p) => p?.key?.name === "state",
+            );
+          navigateCallExpressionNode.arguments = [
+            t.objectExpression([
+              t.objectProperty(
+                t.identifier("pathname"),
+                navigateCallExpressionNode.arguments[0],
+              ),
+            ]),
+            // FIXME: Add Expression to args[2], currently is ObjectProperty that will throw errors
+            // ...(query
+            //   ? t.callExpression(
+            //       t.memberExpression(t.identifier('JSON'), t.identifier('stringify')),
+            //       [query],
+            //     )
+            //   : []),
+          ];
+        });
+
+        // Remove original variableDeclaration from useNavigate()
         path.findParent((p) => p.isVariableDeclaration()).remove();
         break;
       }
