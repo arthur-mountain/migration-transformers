@@ -38,20 +38,20 @@ const getAst = (filePath, overwritten = false) => {
   };
   if (!overwritten && fs.existsSync(TEMP_AST_FILE_PATH)) {
     returned.ast = JSON.parse(fs.readFileSync(TEMP_AST_FILE_PATH, "utf-8"));
+    customWriteFile(TEMP_AST_FILE_PATH, JSON.stringify(returned.ast));
   } else {
     returned.ast = parser.parse(returned.code, {
       sourceType: "module",
       plugins: PARSER_PLUGINS,
     });
   }
-  customWriteFile(TEMP_AST_FILE_PATH, JSON.stringify(returned.ast));
   return returned;
 };
 
 /******************* Traverse visitors   *******************/
 let importSpecifierNameSet = new Set();
 
-// NOTE:Refactoring usase of mui imports
+// NOTE:Refactoring usage for mui imports
 let muiImportPath;
 // import dayjs, { Dayjs } from 'dayjs'
 const createMuiImoprtSpecifier = (local) => {
@@ -378,11 +378,10 @@ const visitors = {
           const attributeExpression = attribute.value.expression;
           switch (attribute.name.name) {
             case "defaultValue":
-            case "value2":
-            case "value3":
             case "value": {
               switch (attributeExpression.type) {
                 // Example: attributeExpression.left || attributeExpression.right
+                // Wrap dayjs for value prop we added dayjs adapter at the top
                 case "LogicalExpression": {
                   if (isTruthyValue(attributeExpression.left)) {
                     attributeExpression.left = t.callExpression(
@@ -400,7 +399,6 @@ const visitors = {
                 }
                 // Example: attributeExpression.test ? attributeExpression.consequent : attributeExpression.alternate
                 case "ConditionalExpression": {
-                  const oldTest = attributeExpression.test;
                   if (isTruthyValue(attributeExpression.consequent)) {
                     attributeExpression.consequent = t.callExpression(
                       t.identifier("dayjs"),
@@ -413,7 +411,6 @@ const visitors = {
                       [attributeExpression.alternate],
                     );
                   }
-                  attributeExpression.test = oldTest;
                   break;
                 }
                 default: {
@@ -426,9 +423,10 @@ const visitors = {
               break;
             }
             case "renderInput": {
+              // For check the arrayFunctionExpression return directly or BlockStatement return
               const inputJSXElement = t.isJSXElement(attributeExpression.body)
                 ? attributeExpression.body
-                : attributeExpression.body.body[0].argument;
+                : attributeExpression.body.body[0].argument; // For BlockStatement
               const ignoreProps = [
                 "fullWidth",
                 attributeExpression.params[0].name,
