@@ -1,67 +1,32 @@
 import { spawn } from "node:child_process";
-import { inspect as _inspect } from "node:util";
 import fs from "node:fs";
 import parser from "@babel/parser";
 import traverse from "@babel/traverse";
 import generate from "@babel/generator";
 import t from "@babel/types";
+import { inspect } from "./inspect.js";
+// import {  resolveAliasPath } from './resolve-path.js'
 
 const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
-/******************* Get path alias *******************/
-const pathAliases = Object.entries(
-  // FIXME: ts config path later on
-  JSON.parse(fs.readFileSync("", "utf8")).compilerOptions.paths,
-).map(([alias, realPath]) => [
-  alias.replace("/*", ""),
-  realPath[0].replace("/*", ""),
-]);
-console.log("=========");
-console.log("pathAliases: \n", pathAliases);
-console.log("=========");
-
-/******************* inspect ast *******************/
-const inspect = ({ message = "", value, options = {} }) => {
-  console.log("=========");
-  console.log(
-    message,
-    "\n",
-    _inspect(value, {
-      showHidden: false,
-      depth: null,
-      colors: true,
-      ...options,
-    }),
-  );
-  console.log("=========");
-};
-
-/******************* resolve alias path  *******************/
-const resolveAliasPath = (path) => {
-  let lastFoundedAlias;
-  pathAliases.forEach(([alias, mappingPath]) => {
-    if (path.startsWith(alias)) lastFoundedAlias = [alias, mappingPath];
-  });
-  return lastFoundedAlias
-    ? path.replace(lastFoundedAlias[0], lastFoundedAlias[1])
-    : path;
-};
-// console.log('transformed: ', resolveAliasPath('@libs-components/components/text'))
-
 /******************* Write and format ast to temp.json  *******************/
 const customWriteFile = (path, data) => {
-  fs.writeFile(path, data, "utf-8", () => {});
-  const child = spawn("pnpm", ["prettier", path, "--write"]);
-  // child.stdout.on('data', (data) => {
-  //   console.log(`stdout: ${data}`);
-  // });
-  //
-  // child.stderr.on('data', (data) => {
-  //   console.error(`stderr: ${data}`);
-  // });
-  //
-  // child.on('close', (code) => {
-  //   console.log(`child process exited with code ${code}`);
-  // });
+  fs.writeFile(path, data, "utf-8", (error) => {
+    if (error) throw error;
+    const child = spawn("yarn", ["prettier", "-w", path]);
+    // child.stdout.on('data', (data) => {
+    //   console.log(`stdout: ${data}`);
+    // });
+    //
+    // child.stderr.on('data', (data) => {
+    //   console.error(`stderr: ${data}`);
+    // });
+    //
+    child.on("close", (code) => {
+      console.log(
+        `write file succussfully with path: ${path} and code: ${code} `,
+      );
+    });
+  });
 };
 
 /******************* Get ast   *******************/
@@ -84,7 +49,33 @@ const getAst = (filePath, overwritten = false) => {
 };
 
 /******************* Traverse visitors   *******************/
+let importSpecifierNameSet = new Set();
+
+// NOTE:Refactoring usase of mui imports
+let muiImportPath;
+// import dayjs, { Dayjs } from 'dayjs'
+const createMuiImoprtSpecifier = (local) => {
+  const specifierLocalName = local.name.replace(
+    "AdapterDateFns",
+    "AdapterDayjs",
+  );
+  return t.importSpecifier(
+    t.identifier(specifierLocalName),
+    t.identifier(specifierLocalName),
+  );
+};
 const visitors = {
+  enter(path) {
+    if (t.isImportDeclaration(path.node)) {
+      path.node.specifiers.forEach((specifier) => {
+        importSpecifierNameSet.add(
+          specifier[
+            t.isImportDefaultSpecifier(specifier) ? "local" : "imported"
+          ].name,
+        );
+      });
+    }
+  },
   ImportDeclaration(path) {
     switch (path.node.source.value) {
       case "@loadable/component": {
@@ -98,41 +89,51 @@ const visitors = {
         break;
       }
       case "react-router-dom": {
-        let shouldInsertNextLink = false;
         path.node.specifiers = path.node.specifiers
           .filter((specifier) => {
-            shouldInsertNextLink = specifier.imported.name === "Link";
             return (
               specifier.imported.name !== "useParams" &&
               specifier.imported.name !== "Link"
             );
           })
           .map((specifier) => {
-            inspect({
-              message: "specifier",
-              value: specifier,
-              options: { depth: 1 },
-            });
             if (specifier.imported.name === "useNavigate") {
               specifier.imported = specifier.local = t.identifier("useRouter");
             }
             return specifier;
           });
         path.node.source = t.stringLiteral("next/router");
-        if (shouldInsertNextLink) {
-          path.insertBefore(
-            t.importDeclaration(
-              t.importDefaultSpecifier(t.identifier("Link")),
-              t.stringLiteral("next/link"),
-            ),
-          );
-        }
-
         break;
       }
       case "react-i18next": {
         path.node.source = t.stringLiteral("next-i18next");
         return;
+      }
+      case "@mui/lab/DatePicker":
+      case "@mui/lab/DateTimePicker":
+      case "@mui/lab/LocalizationProvider":
+      case "@mui/lab/AdapterDateFns": {
+        if (!muiImportPath) {
+          path.node.source = t.stringLiteral("@mui/x-date-pickers");
+          path.node.specifiers = path.node.specifiers
+            .filter(t.isImportDefaultSpecifier)
+            .map((specifier) => createMuiImoprtSpecifier(specifier.local));
+          muiImportPath = path;
+          return;
+        }
+
+        muiImportPath.node.specifiers = [
+          ...muiImportPath.node.specifiers,
+          ...path.node.specifiers
+            .filter(t.isImportDefaultSpecifier)
+            .map((specifier) => createMuiImoprtSpecifier(specifier.local)),
+        ];
+        path.remove();
+        break;
+      }
+      // TODO: Implement @libs/time and update format
+      case "date-fns": {
+        break;
       }
       default: {
         break;
@@ -233,6 +234,13 @@ const visitors = {
         path.findParent((p) => p.isVariableDeclaration()).remove();
         break;
       }
+      // TODO: Update searchParams to router.query
+      // Example:
+      //    const [searchParams] = useSearchParams()
+      //    const test = searchParams.get('test')
+      case "useSearchParams": {
+        break;
+      }
       case "useParams": {
         path.findParent((p) => p.isVariableDeclarator()).node.init =
           t.memberExpression(t.identifier("router"), t.identifier("query"));
@@ -245,31 +253,265 @@ const visitors = {
   },
   JSXElement(path) {
     // TEST: Replace img tag with next/image correctly?
-    // TODO: Check the src, width, height, alt, attributes that are required for next/image
-    if (
-      path.node.openingElement?.name?.name === "img" ||
-      path.node.closingElement?.name?.name === "img"
-    ) {
-      if (path.node.openingElement?.name) {
-        path.node.openingElement.name = t.identifier("Image");
-      }
-      if (path.node.closingElement?.name) {
-        path.node.closingElement.name = t.identifier("Image");
+    // TODO: Check if the src, width, height, alt, attributes for next/image present then replace it
+    // If required attributes are not present, add comment node with FIXME comment
+    if (t.isJSXIdentifier(path.node.openingElement.name, { name: "img" })) {
+      path.node.openingElement.name = t.jsxIdentifier("Image");
+      if (!path.node.openingElement.selfClosing) {
+        path.node.closingElement.name = t.jsxIdentifier("Image");
       }
       return;
     }
 
     // TEST: Replace a tag with next/link correctly?
+    if (t.isJSXIdentifier(path.node.openingElement.name, { name: "a" })) {
+      if (!importSpecifierNameSet.has("Link")) {
+        path
+          .get("program")
+          .unshiftContainer(
+            "body",
+            t.importDeclaration(
+              t.importDefaultSpecifier(t.identifier("Link")),
+              t.stringLiteral("next/link"),
+            ),
+          );
+      }
+      path.node.openingElement.name = t.jsxIdentifier("Link");
+      if (!path.node.openingElement.selfClosing) {
+        path.node.closingElement.name = t.jsxIdentifier("Link");
+      }
+    }
+
+    if (t.isJSXIdentifier(path.node.openingElement.name, { name: "Link" })) {
+      if (!importSpecifierNameSet.has("Link")) {
+        path
+          .get("program")
+          .unshiftContainer(
+            "body",
+            t.importDeclaration(
+              t.importDefaultSpecifier(t.identifier("Link")),
+              t.stringLiteral("next/link"),
+            ),
+          );
+      }
+      // TODO: Update `to` attribute to `href`
+      // Example code:
+      // <Link
+      //   key={`${index}`}
+      //   className={`flex items-center justify-between gap-3 p-4 ${className}`}
+      //   to={'test'}
+      // >
+    }
+
     if (
-      path.node.openingElement?.name?.name === "a" ||
-      path.node.closingElement?.name?.name === "a"
+      t.isJSXIdentifier(path.node.openingElement.name, {
+        name: "LocalizationProvider",
+      })
     ) {
-      if (path.node.openingElement?.name) {
-        path.node.openingElement.name = t.identifier("Link");
+      path.node.openingElement.attributes =
+        path.node.openingElement.attributes.map((attribute) => {
+          if (t.isJSXIdentifier(attribute.name, { name: "dateAdapter" })) {
+            attribute.value = t.jsxExpressionContainer(
+              t.identifier("AdapterDayjs"),
+            );
+          }
+          return attribute;
+        });
+    }
+
+    if (
+      t.isJSXIdentifier(path.node.openingElement.name, {
+        name: "DateTimePicker",
+      }) ||
+      t.isJSXIdentifier(path.node.openingElement.name, { name: "DatePicker" })
+    ) {
+      let extraAttributes = [];
+
+      if (!importSpecifierNameSet.has("renderTimeViewClock")) {
+        muiImportPath.node.specifiers.push(
+          createMuiImoprtSpecifier(t.identifier("renderTimeViewClock")),
+        );
+        extraAttributes.push(
+          t.jsxAttribute(
+            t.jsxIdentifier("viewRenderers"),
+            t.jsxExpressionContainer(
+              t.objectExpression([
+                t.objectProperty(
+                  t.identifier("hours"),
+                  t.identifier("renderTimeViewClock"),
+                ),
+                t.objectProperty(
+                  t.identifier("minutes"),
+                  t.identifier("renderTimeViewClock"),
+                ),
+                t.objectProperty(
+                  t.identifier("seconds"),
+                  t.identifier("renderTimeViewClock"),
+                ),
+              ]),
+            ),
+          ),
+        );
+        importSpecifierNameSet.add("renderTimeViewClock");
       }
-      if (path.node.closingElement?.name) {
-        path.node.closingElement.name = t.identifier("Link");
-      }
+
+      const isTruthyValue = (node) =>
+        node &&
+        !t.isNullLiteral(node) &&
+        !(t.isIdentifier(node.init) && node.init.name === "undefined");
+
+      path.node.openingElement.attributes = path.node.openingElement.attributes
+        .filter(
+          (attribute) =>
+            attribute.name.name !== "inputFormat" &&
+            attribute.name.name !== "mask",
+        )
+        .map((attribute) => {
+          // Example: JSXAttribute, name.type is JSXIdentifier and value.type is JSXExpressionContainer
+          inspect({
+            message: "JSXAttribute",
+            value: attribute,
+            options: { depth: 2 },
+          });
+          if (!attribute.value) return attribute;
+
+          const attributeExpression = attribute.value.expression;
+          switch (attribute.name.name) {
+            case "defaultValue":
+            case "value2":
+            case "value3":
+            case "value": {
+              switch (attributeExpression.type) {
+                // Example: attributeExpression.left || attributeExpression.right
+                case "LogicalExpression": {
+                  if (isTruthyValue(attributeExpression.left)) {
+                    attributeExpression.left = t.callExpression(
+                      t.identifier("dayjs"),
+                      [attributeExpression.left],
+                    );
+                  }
+                  if (isTruthyValue(attributeExpression.right)) {
+                    attributeExpression.right = t.callExpression(
+                      t.identifier("dayjs"),
+                      [attributeExpression.right],
+                    );
+                  }
+                  break;
+                }
+                // Example: attributeExpression.test ? attributeExpression.consequent : attributeExpression.alternate
+                case "ConditionalExpression": {
+                  const oldTest = attributeExpression.test;
+                  if (isTruthyValue(attributeExpression.consequent)) {
+                    attributeExpression.consequent = t.callExpression(
+                      t.identifier("dayjs"),
+                      [attributeExpression.consequent],
+                    );
+                  }
+                  if (isTruthyValue(attributeExpression.alternate)) {
+                    attributeExpression.alternate = t.callExpression(
+                      t.identifier("dayjs"),
+                      [attributeExpression.alternate],
+                    );
+                  }
+                  attributeExpression.test = oldTest;
+                  break;
+                }
+                default: {
+                  attribute.value.expression = t.callExpression(
+                    t.identifier("dayjs"),
+                    [attribute.value.expression],
+                  );
+                }
+              }
+              break;
+            }
+            case "renderInput": {
+              const inputJSXElement = t.isJSXElement(attributeExpression.body)
+                ? attributeExpression.body
+                : attributeExpression.body.body[0].argument;
+              const ignoreProps = [
+                "fullWidth",
+                attributeExpression.params[0].name,
+              ];
+              let objectProperties = [];
+              inputJSXElement.openingElement.attributes
+                .filter(
+                  (attribute) =>
+                    t.isJSXAttribute(attribute) &&
+                    !ignoreProps.some((name) =>
+                      t.isJSXIdentifier(attribute.name, { name }),
+                    ),
+                )
+                .forEach((attribute) => {
+                  if (t.isObjectExpression(attribute.value.expression)) {
+                    objectProperties.push(
+                      ...attribute.value.expression.properties.filter(
+                        (propertie) => !t.isSpreadElement(propertie),
+                      ),
+                    );
+                  } else {
+                    objectProperties.push(
+                      t.objectProperty(
+                        t.identifier(attribute.name.name),
+                        attribute.value.expression,
+                      ),
+                    );
+                  }
+                });
+
+              extraAttributes.push(
+                t.jsxAttribute(
+                  t.jsxIdentifier("slots"),
+                  t.jsxExpressionContainer(
+                    t.objectExpression([
+                      t.objectProperty(
+                        t.identifier("textField"),
+                        t.identifier("Textfield"),
+                      ),
+                    ]),
+                  ),
+                ),
+              );
+              extraAttributes.push(
+                t.jsxAttribute(
+                  t.jsxIdentifier("slotProps"),
+                  t.jsxExpressionContainer(
+                    t.objectExpression([
+                      t.objectProperty(
+                        t.identifier("textField"),
+                        t.objectExpression(objectProperties),
+                      ),
+                    ]),
+                  ),
+                ),
+              );
+              return;
+            }
+            default: {
+              break;
+            }
+          }
+          return attribute;
+        })
+        .filter(Boolean);
+
+      path.node.openingElement.attributes.push(...extraAttributes);
+    }
+
+    // TODO: Update `HashLink` to `Link` from next/link
+    // Example code:
+    //  <HashLink
+    //    to={`${location.pathname}${location.search ?? ''}#${
+    //      id
+    //    }`}
+    //    replace={true}
+    //    smooth
+    //  >
+    //    {some jsx}
+    //  </HashLink>
+    if (
+      t.isJSXIdentifier(path.node.openingElement.name, { name: "HashLink" })
+    ) {
     }
   },
 };
@@ -279,8 +521,11 @@ const transformFile = (filePath) => {
   const { code, ast } = getAst(filePath, true);
   traverse.default(ast, visitors);
   customWriteFile(`traversed-${TEMP_AST_FILE_PATH}`, JSON.stringify(ast));
-  fs.writeFileSync("parsed.tsx", generate.default(ast, undefined, code).code);
+  customWriteFile(
+    `parsed.tsx`,
+    generate.default(ast, { retainLines: true }, code).code,
+  );
 };
 
-// FIXME:args later finished
-transformFile();
+// FIXME: add path to file
+transformFile("");
