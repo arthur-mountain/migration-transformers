@@ -117,6 +117,7 @@ const createUseRouterVariableDeclaration = (path) => {
     t.callExpression(t.identifier("useRouter"), []),
   );
   const useRouterDeclaration = t.variableDeclaration("const", [useRouterVar]);
+  // Refactoring: insert into path scope
   path
     .findParent((p) => p.isBlockStatement())
     .unshiftContainer("body", useRouterDeclaration);
