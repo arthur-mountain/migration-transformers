@@ -767,3 +767,4 @@ transformFile("");
 //   5. CRUD scope using scope methods.
 //   6. Consistent saving path as variable, access the static data using path.node or path.parent or path.container, ...etc.
 //   7. Check path.key and path.type for current path seems more directly.
+//   8. Using state more commonly the sharing global data in traverse journey.
