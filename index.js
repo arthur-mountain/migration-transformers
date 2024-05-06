@@ -758,3 +758,12 @@ const transformFile = (filePath) => {
 
 // FIXME: add entry path to file
 transformFile("");
+
+// Improvements with babel ast actions in the future :
+//   1. Using pre/post hook in traverse.
+//   2. Using state in traverse.
+//   3. Using more @babel/types for validation and creation.
+//   4. CRUD using Path, but the static data saving in Node.
+//   5. CRUD scope using scope methods.
+//   6. Consistent saving path as variable, access the static data using path.node or path.parent or path.container, ...etc.
+//   7. Check path.key and path.type for current path seems more directly.
