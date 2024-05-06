@@ -759,12 +759,23 @@ const transformFile = (filePath) => {
 // FIXME: add entry path to file
 transformFile("");
 
+// Improvements three of concept for babel ast traverse:
+// 1. NodePath
+// 2. Node
+// 3. Scope
+// 4. Hub
+// 5. Context(optional)
+
 // Improvements with babel ast actions in the future :
 //   1. Using pre/post hook in traverse.
-//   2. Using state in traverse.
-//   3. Using more @babel/types for validation and creation.
-//   4. CRUD using Path, but the static data saving in Node.
-//   5. CRUD scope using scope methods.
-//   6. Consistent saving path as variable, access the static data using path.node or path.parent or path.container, ...etc.
-//   7. Check path.key and path.type for current path seems more directly.
-//   8. Using state more commonly the sharing global data in traverse journey.
+//   2. Using enter/exit in traverse.
+//   3. Using state in traverse.
+//   4. Using more @babel/types for validation and creation.
+//   5. CRUD using Path, but the static data saving in Node.
+//   6. CRUD scope using scope methods, such as `binding`, `getBlockParent`, `push`, `rename`, `remove`, `register`, ...etc.
+//   7. Consistent saving variable with path.
+//   8. Accessing the static data using `path.node` or `path.parent` or `path.container`, ...etc.
+//   9. Accessing the path using `path` or `path.parentPath` ...etc.
+//   10. Check `path.key` and `path.type` and `path.listKey` for current path seems more directly.
+//   11. Using state commonly that sharing global data in traverse journey.
+//   12. Using Hub build error, ...etc.
