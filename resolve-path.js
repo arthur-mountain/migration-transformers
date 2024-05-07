@@ -25,41 +25,47 @@ const resolveAliasPath = (tsConfigPath) => {
       if (inputPath.startsWith(alias)) lastFoundedAlias = [alias, mappingPath];
     });
     // Replace path with alias
-    const filePath = lastFoundedAlias
-      ? path.join(
-          BASE_PATH,
-          inputPath.replace(lastFoundedAlias[0], lastFoundedAlias[1]),
-        )
-      : path.join(BASE_PATH, "src", inputPath);
+    const filePath = inputPath.startsWith(BASE_PATH)
+      ? inputPath
+      : lastFoundedAlias
+        ? path.join(
+            BASE_PATH,
+            inputPath.replace(lastFoundedAlias[0], lastFoundedAlias[1]),
+          )
+        : path.join(BASE_PATH, "src", inputPath);
 
     // Returns the path if it has an extension
-    if (path.extname(filePath)) return filePath;
+    if (path.extname(filePath)) return [filePath];
 
-    // Returns the path if file exists
-    if (fs.existsSync(`${filePath}.tsx`)) return `${filePath}.tsx`;
+    let paths = [];
 
-    // Auto complete shortcut path with index.tsx
+    if (fs.existsSync(`${filePath}.tsx`)) paths.push(`${filePath}.tsx`);
+
+    // Auto complete path with index.tsx
     const autoCompletedPath = path.join(filePath, "index.tsx");
+    if (fs.existsSync(autoCompletedPath)) paths.push(autoCompletedPath);
 
-    // Check again ignore third party packages that may not exist after we're processing at the above steps
-    return fs.existsSync(autoCompletedPath) ? autoCompletedPath : "";
+    // Ignore third party packages that may not exist after we're processing at the above steps
+    return paths.length ? paths : null;
   };
 };
 
 const getPathInfo = (fullPath) => {
   const fullName = path.basename(fullPath);
   const extension = path.extname(fullName);
-  // Write file into current directory for testing.
-  const relativePathInCurrentDir = path.dirname(
-    fullPath.replace(`${BASE_PATH}/src/`, ""),
-  );
+  // Just for write file in current directory
+  const outputPath = path
+    .dirname(fullPath.replace(`${BASE_PATH}/src/`, ""))
+    .split("/")
+    .map((p) => (p.startsWith(":") ? `[${p.slice(1)}]` : p))
+    .join("/");
 
   return {
     fullPath,
     fullName,
     extension,
     fileName: fullName.slice(0, -extension.length),
-    relativePathInCurrentDir,
+    outputPath,
   };
 };
 

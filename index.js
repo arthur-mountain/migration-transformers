@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
+import nodeJsPath from "node:path";
 import parser from "@babel/parser";
 import traverse from "@babel/traverse";
 import generate from "@babel/generator";
@@ -10,26 +10,24 @@ import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
 const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
 
+let curerntProcessingPath = "";
 let queue = [];
-const handledFileNameSet = new Set();
+const handledFileNameSet = fs.existsSync("handled.json")
+  ? new Set(...JSON.parse(fs.readFileSync("handled.json", "utf-8")))
+  : new Set();
 
 /******************* Write and format ast to temp.json  *******************/
 const customWriteFile = (filePath, data) => {
-  const dirPath = path.dirname(filePath);
+  const dirPath = nodeJsPath.dirname(filePath);
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
-
   fs.writeFile(filePath, data, "utf-8", (error) => {
     if (error) throw error;
     const child = spawn("yarn", ["prettier", "-w", filePath]);
-    // child.stderr.on('data', (data) => {
-    //   console.error(`stderr: ${data}`);
-    // });
-    //
     child.on("close", () => {
       console.log(
-        `writes file succussfully with path: \x1b[32m${filePath}\x1b[0m `,
+        `writes file succussfully with path: \x1b[32m${filePath}\x1b[0m`,
       );
     });
   });
@@ -37,15 +35,28 @@ const customWriteFile = (filePath, data) => {
 
 /******************* Get ast   *******************/
 const getAst = (pathInfo, overwritten = false) => {
-  const AST_PATH = `asts/${pathInfo.relativePathInCurrentDir}/${pathInfo.fileName}.json`;
+  const readedPath = pathInfo.fullPath;
+  // ignore files
+  if (
+    !fs.existsSync(pathInfo.fullPath) ||
+    [".d.ts", ".png", ".scss", ".css"].some((ext) => readedPath.endsWith(ext))
+  ) {
+    fs.appendFileSync("un-handled-files.txt", `${readedPath}\n`);
+    return;
+  }
+
+  const AST_PATH = `asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`;
   let returned = {
-    code: fs.readFileSync(pathInfo.fullPath, "utf-8"),
+    code: fs.readFileSync(readedPath, "utf-8"),
     ast: undefined,
     isFileWritted: false,
   };
-  if (!overwritten && fs.existsSync(AST_PATH)) {
-    returned.ast = JSON.parse(fs.readFileSync(AST_PATH, "utf-8"));
-  } else {
+  try {
+    if (overwritten) throw new Error("Overwritten");
+    if (fs.existsSync(AST_PATH)) {
+      returned.ast = JSON.parse(fs.readFileSync(AST_PATH, "utf-8"));
+    }
+  } catch {
     returned.ast = parser.parse(returned.code, {
       sourceType: "module",
       plugins: PARSER_PLUGINS,
@@ -55,6 +66,7 @@ const getAst = (pathInfo, overwritten = false) => {
   }
   return returned;
 };
+
 /******************* Traverse utils *******************/
 let importSpecifierNameSet = new Set();
 let variableDeclaratorNameSet = new Set();
@@ -82,22 +94,6 @@ const createNewImportDeclaration = (path, importDeclaration) => {
   }
 };
 
-// JSON utils
-const createJsonCallExpression = {
-  stringify: (value) => {
-    return t.callExpression(
-      t.memberExpression(t.identifier("JSON"), t.identifier("stringify")),
-      [value],
-    );
-  },
-  parse: (value) => {
-    return t.callExpression(
-      t.memberExpression(t.identifier("JSON"), t.identifier("parse")),
-      [value],
-    );
-  },
-};
-
 // Next router utils
 const routerIdentifier = t.identifier("router");
 const createUseRouterVariableDeclaration = (path) => {
@@ -117,25 +113,42 @@ const createUseRouterVariableDeclaration = (path) => {
     t.callExpression(t.identifier("useRouter"), []),
   );
   const useRouterDeclaration = t.variableDeclaration("const", [useRouterVar]);
-  // Refactoring: insert into path scope
   path
     .findParent((p) => p.isBlockStatement())
     .unshiftContainer("body", useRouterDeclaration);
   variableDeclaratorNameSet.add("router");
 };
 
-let muiImportPath;
-const createMuiImoprtSpecifier = (local) => {
-  // import dayjs, { Dayjs } from 'dayjs'
-  // Check this is necessary or not the mui also support AdapterDateFns directly
-  const muiSpecifier = t.identifier(
-    local.name.replace("AdapterDateFns", "AdapterDayjs"),
-  );
-  return t.importSpecifier(muiSpecifier, muiSpecifier);
+const createJSXComments = ({
+  leadingComments,
+  innerComments,
+  trailingComments,
+}) => {
+  const emptyJSXExpression = t.jsxEmptyExpression();
+  leadingComments && (emptyJSXExpression.leadingComments = leadingComments);
+  innerComments && (emptyJSXExpression.innerComments = innerComments);
+  trailingComments && (emptyJSXExpression.trailingComments = trailingComments);
+  return t.jsxExpressionContainer(emptyJSXExpression);
 };
+
+const isTruthyValue = (node) =>
+  node &&
+  !t.isNullLiteral(node) &&
+  !(t.isIdentifier(node.init) && node.init.name === "undefined");
+
+let muiDatePickersImportPath;
+let dateFnsImportPath;
+
+// FIXME: Dynamic ts config path
+const getPath = resolveAliasPath();
 
 /******************* Traverse visitor   *******************/
 const visitors = {
+  Program: {
+    enter: () => {
+      console.log(`strated path: \x1b[32m${curerntProcessingPath}\x1b[0m`);
+    },
+  },
   enter(path) {
     if (t.isImportDeclaration(path.node)) {
       path.node.specifiers.forEach((specifier) => {
@@ -145,6 +158,17 @@ const visitors = {
           ].name,
         );
       });
+
+      if (path.node.source.value.startsWith(".")) {
+        queue.push(
+          nodeJsPath.join(
+            nodeJsPath.dirname(curerntProcessingPath),
+            path.node.source.value,
+          ),
+        );
+      } else {
+        queue.push(path.node.source.value);
+      }
       return;
     }
     if (t.isVariableDeclaration(path.node)) {
@@ -160,7 +184,7 @@ const visitors = {
           return;
         }
         if (t.isObjectPattern(declaration.id)) {
-          declaration.id.properties?.forEach((property) => {
+          declaration.properties?.forEach((property) => {
             variableDeclaratorNameSet.add(property.value.name);
           });
           return;
@@ -189,23 +213,43 @@ const visitors = {
         path.node.source = t.stringLiteral("next-i18next");
         break;
       }
+      case "@mui/lab/AdapterDateFns": {
+        // TODO: handling date-fn v3 , but there're different adapter
+        path.replaceWith(
+          t.importDeclaration(
+            [t.importDefaultSpecifier(t.identifier("AdapterDateFnsV3"))],
+            t.stringLiteral("@mui/x-date-pickers/AdapterDateFnsV3"),
+          ),
+        );
+        break;
+      }
+      case "@mui/lab":
       case "@mui/lab/DatePicker":
       case "@mui/lab/DateTimePicker":
-      case "@mui/lab/LocalizationProvider":
-      case "@mui/lab/AdapterDateFns": {
-        if (!muiImportPath) {
+      case "@mui/lab/LocalizationProvider": {
+        if (!muiDatePickersImportPath) {
           path.node.source = t.stringLiteral("@mui/x-date-pickers");
-          path.node.specifiers = path.node.specifiers
-            .filter(t.isImportDefaultSpecifier)
-            .map((specifier) => createMuiImoprtSpecifier(specifier.local));
-          muiImportPath = path;
+          path.node.specifiers = path.node.specifiers.map((specifier) =>
+            t.importSpecifier(
+              specifier.local,
+              t.isImportDefaultSpecifier(specifier)
+                ? specifier.local
+                : specifier.imported,
+            ),
+          );
+          muiDatePickersImportPath = path;
           return;
         }
-        muiImportPath.node.specifiers = [
-          ...muiImportPath.node.specifiers,
-          ...path.node.specifiers
-            .filter(t.isImportDefaultSpecifier)
-            .map((specifier) => createMuiImoprtSpecifier(specifier.local)),
+        muiDatePickersImportPath.node.specifiers = [
+          ...muiDatePickersImportPath.node.specifiers,
+          ...path.node.specifiers.map((specifier) =>
+            t.importSpecifier(
+              specifier.local,
+              t.isImportDefaultSpecifier(specifier)
+                ? specifier.local
+                : specifier.imported,
+            ),
+          ),
         ];
         path.remove();
         break;
@@ -234,11 +278,17 @@ const visitors = {
             ? t.objectProperty(t.identifier("loading"), loadingProperty.value)
             : []),
         ]);
-        // NOTE: Comment temporary for testing visitor is working or not in single file.
-        // if (t.isImport(path.node.arguments[0].body.callee)) {
-        //   const importedPath = path.node.arguments[0].body.arguments[0].value
-        //   importedPath && queue.push(importedPath)
-        // }
+        // NOTE: If we need recursive traverse
+        if (t.isImport(path.node.arguments[0].body.callee)) {
+          const importedPath = path.node.arguments[0].body.arguments[0].value;
+          importedPath &&
+            queue.push(
+              nodeJsPath.join(
+                nodeJsPath.dirname(curerntProcessingPath),
+                importedPath,
+              ),
+            );
+        }
         break;
       }
       case "useNavigate": {
@@ -260,8 +310,10 @@ const visitors = {
             navigateCallExpressionNode.arguments[0].argument.value === 1
               ? "back"
               : navigateCallExpressionNode.arguments[1]?.properties?.find(
-                  (p) => p?.key?.name === "replace",
-                ) || "push";
+                    (p) => p?.key?.name === "replace",
+                  )
+                ? "replace"
+                : "push";
 
           navigateCallExpressionNode.callee = t.memberExpression(
             routerIdentifier,
@@ -288,12 +340,7 @@ const visitors = {
                       t.objectProperty(
                         t.identifier("query"),
                         t.objectExpression([
-                          t.objectProperty(
-                            t.identifier(queryProperty.key.name),
-                            createJsonCallExpression.stringify(
-                              queryProperty.value,
-                            ),
-                          ),
+                          t.spreadElement(queryProperty.key),
                         ]),
                       ),
                     ]
@@ -313,15 +360,71 @@ const visitors = {
         path.parentPath.scope.bindings[
           searchParamsName
         ].referencePaths?.forEach((referencePath) => {
-          referencePath.parentPath.parentPath.replaceWith(
-            t.optionalMemberExpression(
-              t.memberExpression(routerIdentifier, t.identifier("query")),
-              t.identifier(referencePath.parentPath.parent.arguments[0].value),
-              false,
-              true,
-            ),
+          if (
+            referencePath.key !== "object" &&
+            !t.isMemberExpression(referencePath.parent)
+          ) {
+            return;
+          }
+
+          const callExpression = referencePath.findParent((p) =>
+            p.isCallExpression(),
           );
+          const isIdentifierArgument = t.isIdentifier(
+            callExpression.node.arguments[0],
+          );
+          const searchParamsKeyIdentifier = isIdentifierArgument
+            ? t.identifier(callExpression.node.arguments[0].name)
+            : t.identifier(callExpression.node.arguments[0].value);
+
+          switch (callExpression.node.callee.property.name) {
+            case "get": {
+              referencePath.parentPath.parentPath.replaceWith(
+                t.memberExpression(
+                  t.memberExpression(routerIdentifier, t.identifier("query")),
+                  searchParamsKeyIdentifier,
+                  isIdentifierArgument,
+                ),
+              );
+              break;
+            }
+            case "delete": {
+              callExpression.replaceWith(
+                t.unaryExpression(
+                  "delete",
+                  t.memberExpression(
+                    t.memberExpression(routerIdentifier, t.identifier("query")),
+                    searchParamsKeyIdentifier,
+                    isIdentifierArgument,
+                  ),
+                  true,
+                ),
+              );
+              break;
+            }
+            default: {
+              break;
+            }
+          }
         });
+
+        if (path.parentPath.node.id.elements[1]) {
+          const referencePaths =
+            path.scope.getBinding(path.parentPath.node.id.elements[1].name)
+              ?.referencePaths || [];
+          inspect({
+            message: "updateSearchParams",
+            value: referencePaths,
+          });
+          referencePaths.forEach((referencePath) => {
+            referencePath.parentPath.replaceWith(
+              t.callExpression(
+                t.memberExpression(routerIdentifier, t.identifier("replace")),
+                [routerIdentifier],
+              ),
+            );
+          });
+        }
         createUseRouterVariableDeclaration(path);
         path.parentPath.remove();
         break;
@@ -379,16 +482,9 @@ const visitors = {
                   break;
                 }
                 case "state": {
-                  const state = t.optionalMemberExpression(
-                    t.memberExpression(routerIdentifier, t.identifier("query")),
-                    t.identifier("state"),
-                    false,
-                    true,
-                  );
-                  init = t.conditionalExpression(
-                    state,
-                    createJsonCallExpression.parse(state),
-                    t.objectExpression([]),
+                  init = t.memberExpression(
+                    routerIdentifier,
+                    t.identifier("query"),
                   );
                   break;
                 }
@@ -438,7 +534,6 @@ const visitors = {
     }
   },
   JSXElement(path) {
-    // TEST: Replace img tag with next/image correctly?
     if (t.isJSXIdentifier(path.node.openingElement.name, { name: "img" })) {
       createNewImportDeclaration(
         path,
@@ -459,13 +554,20 @@ const visitors = {
           path.node.closingElement.name = t.jsxIdentifier("Image");
         }
       } else {
-        // TODO: Add comment if possible
-        // path.insertBefore(t.jsxComment('replaces to next/image in the future'))
+        path.insertBefore(
+          createJSXComments({
+            innerComments: [
+              {
+                type: "CommentBlock",
+                value: " Migration: replaces with next/image in the future. ",
+              },
+            ],
+          }),
+        );
       }
       return;
     }
 
-    // TEST: Replace a tag with next/link correctly?
     if (t.isJSXIdentifier(path.node.openingElement.name, { name: "a" })) {
       createNewImportDeclaration(
         path,
@@ -480,7 +582,6 @@ const visitors = {
       }
     }
 
-    // TEST: Replace Link tag from react-router-dom with next/link correctly?
     if (t.isJSXIdentifier(path.node.openingElement.name, { name: "Link" })) {
       createNewImportDeclaration(
         path,
@@ -490,26 +591,33 @@ const visitors = {
         ),
       );
 
-      let isFoundState = false;
-      path.node.openingElement.attributes =
-        path.node.openingElement.attributes.map((attribute) => {
+      let lastStateAttribute;
+      path.node.openingElement.attributes = path.node.openingElement.attributes
+        .filter((attribute) => {
+          const isStateAttribute = t.isJSXIdentifier(attribute.name, {
+            name: "state",
+          });
+          if (isStateAttribute) lastStateAttribute = attribute;
+          return !isStateAttribute;
+        })
+        .map((attribute) => {
           if (t.isJSXIdentifier(attribute.name, { name: "to" })) {
+            if (
+              lastStateAttribute &&
+              lastStateAttribute.value.expression.properties?.length
+            ) {
+              attribute.value = t.stringLiteral(
+                `${attribute.value.value}?${lastStateAttribute.value.expression.properties
+                  .map((property) => {
+                    return `${property.key.name}=${property.value.value}`;
+                  })
+                  .join("&")}`,
+              );
+            }
             attribute.name = t.jsxIdentifier("href");
-          }
-          if (
-            t.isJSXIdentifier(attribute.name, { name: "state" }) &&
-            !isFoundState
-          ) {
-            // TODO: Handle state in Link component
-            isFoundState = true;
-            inspect({ message: "state", value: attribute });
           }
           return attribute;
         });
-      if (isFoundState) {
-        // TODO: Add comment if possible
-        // path.insertBefore(t.jsxComment('replaces to next/image in the future'))
-      }
     }
 
     if (
@@ -518,10 +626,11 @@ const visitors = {
       })
     ) {
       path.node.openingElement.attributes =
+        // TODO: There're different adapters
         path.node.openingElement.attributes.map((attribute) => {
           if (t.isJSXIdentifier(attribute.name, { name: "dateAdapter" })) {
             attribute.value = t.jsxExpressionContainer(
-              t.identifier("AdapterDayjs"),
+              t.identifier("AdapterDateFnsV3"),
             );
           }
           return attribute;
@@ -537,8 +646,12 @@ const visitors = {
       let extraAttributes = [];
 
       if (!importSpecifierNameSet.has("renderTimeViewClock")) {
-        muiImportPath.node.specifiers.push(
-          createMuiImoprtSpecifier(t.identifier("renderTimeViewClock")),
+        const muiRenderTimeViewSpecifier = t.identifier("renderTimeViewClock");
+        muiDatePickersImportPath.node.specifiers.push(
+          t.importSpecifier(
+            muiRenderTimeViewSpecifier,
+            muiRenderTimeViewSpecifier,
+          ),
         );
         extraAttributes.push(
           t.jsxAttribute(
@@ -564,11 +677,6 @@ const visitors = {
         importSpecifierNameSet.add("renderTimeViewClock");
       }
 
-      const isTruthyValue = (node) =>
-        node &&
-        !t.isNullLiteral(node) &&
-        !(t.isIdentifier(node.init) && node.init.name === "undefined");
-
       path.node.openingElement.attributes = path.node.openingElement.attributes
         .filter(
           (attribute) =>
@@ -581,19 +689,20 @@ const visitors = {
 
           const attributeExpression = attribute.value.expression;
           switch (attribute.name.name) {
+            // TODO: There're different adapters
             case "value": {
               switch (attributeExpression.type) {
                 // Example: attributeExpression.left || attributeExpression.right
                 case "LogicalExpression": {
                   if (isTruthyValue(attributeExpression.left)) {
                     attributeExpression.left = t.callExpression(
-                      t.identifier("dayjs"),
+                      t.identifier("toDate"),
                       [attributeExpression.left],
                     );
                   }
                   if (isTruthyValue(attributeExpression.right)) {
                     attributeExpression.right = t.callExpression(
-                      t.identifier("dayjs"),
+                      t.identifier("toDate"),
                       [attributeExpression.right],
                     );
                   }
@@ -603,13 +712,13 @@ const visitors = {
                 case "ConditionalExpression": {
                   if (isTruthyValue(attributeExpression.consequent)) {
                     attributeExpression.consequent = t.callExpression(
-                      t.identifier("dayjs"),
+                      t.identifier("toDate"),
                       [attributeExpression.consequent],
                     );
                   }
                   if (isTruthyValue(attributeExpression.alternate)) {
                     attributeExpression.alternate = t.callExpression(
-                      t.identifier("dayjs"),
+                      t.identifier("toDate"),
                       [attributeExpression.alternate],
                     );
                   }
@@ -617,8 +726,26 @@ const visitors = {
                 }
                 default: {
                   attribute.value.expression = t.callExpression(
-                    t.identifier("dayjs"),
+                    t.identifier("toDate"),
                     [attribute.value.expression],
+                  );
+                }
+              }
+              if (!importSpecifierNameSet.has("toDate")) {
+                const toDateIdentifier = t.identifier("toDate");
+                const toDateSpecifier = t.importSpecifier(
+                  toDateIdentifier,
+                  toDateIdentifier,
+                );
+                if (dateFnsImportPath) {
+                  dateFnsImportPath.node.specifiers.push(toDateSpecifier);
+                } else {
+                  createNewImportDeclaration(
+                    path,
+                    t.importDeclaration(
+                      [toDateSpecifier],
+                      t.stringLiteral("date-fns"),
+                    ),
                   );
                 }
               }
@@ -628,10 +755,7 @@ const visitors = {
               const inputJSXElement = t.isJSXElement(attributeExpression.body)
                 ? attributeExpression.body
                 : attributeExpression.body.body[0].argument;
-              const ignoreProps = [
-                "fullWidth",
-                attributeExpression.params[0].name,
-              ];
+              const ignoreProps = [attributeExpression.params[0].name];
               let objectProperties = [];
               inputJSXElement.openingElement.attributes
                 .filter(
@@ -658,14 +782,20 @@ const visitors = {
                   }
                 });
 
+              // TODO: Dynamic reorg pros an names
+              const TEST_INPUT = {
+                name: "testField",
+                componentName: "testTextField",
+              };
+
               extraAttributes.push(
                 t.jsxAttribute(
                   t.jsxIdentifier("slots"),
                   t.jsxExpressionContainer(
                     t.objectExpression([
                       t.objectProperty(
-                        t.identifier("textField"),
-                        t.identifier("Textfield"),
+                        t.identifier(TEST_INPUT.name),
+                        t.identifier(TEST_INPUT.componentName),
                       ),
                     ]),
                   ),
@@ -677,7 +807,7 @@ const visitors = {
                   t.jsxExpressionContainer(
                     t.objectExpression([
                       t.objectProperty(
-                        t.identifier("textField"),
+                        t.identifier(TEST_INPUT.name),
                         t.objectExpression(objectProperties),
                       ),
                     ]),
@@ -726,40 +856,55 @@ const visitors = {
 };
 
 /******************* Transform and traverse file  *******************/
-// FIXME: add ts config path
-const getPath = resolveAliasPath("");
-const transformFile = (filePath) => {
-  queue.push(filePath);
+const transformFile = (filePaths = []) => {
+  queue.push(...filePaths);
 
   while (queue.length) {
-    const fullPath = getPath(queue.pop());
-    if (!fullPath || handledFileNameSet.has(fullPath)) continue;
-    handledFileNameSet.add(fullPath);
+    const fullPaths = getPath(queue.pop());
+    if (!fullPaths?.length) continue;
+
+    curerntProcessingPath = fullPaths.shift();
+
+    if (fullPaths.length) queue.push(...fullPaths);
+
+    if (handledFileNameSet.has(curerntProcessingPath)) continue;
+    handledFileNameSet.add(curerntProcessingPath);
 
     // Get file path info, and traverse ast
-    const pathInfo = getPathInfo(fullPath);
-    const { code, ast, isFileWritted } = getAst(pathInfo);
+    const pathInfo = getPathInfo(curerntProcessingPath);
+    const { code, ast, isFileWritted } = getAst(pathInfo, true) || {};
+    if (!ast) continue;
     traverse.default(ast, visitors);
 
     if (isFileWritted) {
       // Write transformed ast
       customWriteFile(
-        `traversed-asts/${pathInfo.relativePathInCurrentDir}/${pathInfo.fileName}.json`,
+        `traversed-asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`,
         JSON.stringify(ast),
       );
       // Write transformed code
       customWriteFile(
-        `parsed/${pathInfo.relativePathInCurrentDir}/${pathInfo.fullName}`,
-        generate.default(ast, { retainLines: true }, code).code,
+        `parsed/${pathInfo.outputPath}/${pathInfo.fullName}`,
+        generate.default(ast, { retainLines: true, comments: true }, code).code,
       );
     }
   }
+
+  if (handledFileNameSet.size) {
+    customWriteFile(
+      "handled-files.json",
+      JSON.stringify([...handledFileNameSet]),
+    );
+  }
 };
 
-// FIXME: add entry path to file
-transformFile("");
+try {
+  transformFile(["pages/exam/:id"]);
+} catch (error) {
+  console.error(error);
+}
 
-// Improvements three of concept for babel ast traverse:
+// Improvements five of babel type concept for babel ast traverse:
 // 1. NodePath
 // 2. Node
 // 3. Scope
