@@ -10,7 +10,7 @@ import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
 const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
 
-let workInProcessingPath = "";
+let workInProgressingPath = "";
 const handledFileNameSet = fs.existsSync("handled.json")
   ? new Set(...JSON.parse(fs.readFileSync("handled.json", "utf-8")))
   : new Set();
@@ -23,7 +23,9 @@ const Stack = {
 };
 const addDependencyPath = (path) => {
   if (/^\./.test(path)) {
-    Stack.push(nodeJsPath.join(nodeJsPath.dirname(workinProgrssPath), path));
+    Stack.push(
+      nodeJsPath.join(nodeJsPath.dirname(workInProgressingPath), path),
+    );
   } else if (/^@\//.test(path)) {
     Stack.push(path);
   }
@@ -159,7 +161,7 @@ const getPath = resolveAliasPath();
 const visitors = {
   Program: {
     enter: () => {
-      console.log(`strated path: \x1b[32m${workInProcessingPath}\x1b[0m`);
+      console.log(`strated path: \x1b[32m${workInProgressingPath}\x1b[0m`);
     },
   },
   enter(path) {
@@ -859,15 +861,15 @@ const transformFile = (filePaths = []) => {
     const fullPaths = getPath(Stack.pop());
     if (!fullPaths?.length) continue;
 
-    workInProcessingPath = fullPaths.shift();
+    workInProgressingPath = fullPaths.shift();
 
     if (fullPaths.length) Stack.push(...fullPaths);
 
-    if (handledFileNameSet.has(workInProcessingPath)) continue;
-    handledFileNameSet.add(workInProcessingPath);
+    if (handledFileNameSet.has(workInProgressingPath)) continue;
+    handledFileNameSet.add(workInProgressingPath);
 
     // Get file path info, and traverse ast
-    const pathInfo = getPathInfo(workInProcessingPath);
+    const pathInfo = getPathInfo(workInProgressingPath);
     const { code, ast, isFileWritted } = getAst(pathInfo, true) || {};
     if (!ast) continue;
     traverse.default(ast, visitors);
