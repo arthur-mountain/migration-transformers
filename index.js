@@ -16,15 +16,17 @@ const handledFileNameSet = fs.existsSync("handled.json")
   : new Set();
 const Stack = {
   stack: [],
-  push: (...paths) => {
-    paths.forEach((path) => {
-      if (!handledFileNameSet.has(path)) console.log("Stack push: ", path);
-    });
-    Stack.stack.push(...paths);
-  },
+  push: (...paths) => Stack.stack.push(...paths),
   pop: () => Stack.stack.pop(),
   size: () => Stack.stack.length,
-  peek: () => Stack.stack[Stack.size() - 1],
+  peek: () => Stack.stack.at(-1),
+};
+const addDependencyPath = (path) => {
+  if (/^\./.test(path)) {
+    Stack.push(nodeJsPath.join(nodeJsPath.dirname(workinProgrssPath), path));
+  } else if (/^@\//.test(path)) {
+    Stack.push(path);
+  }
 };
 
 /******************* Write and format ast to temp.json  *******************/
@@ -173,16 +175,7 @@ const visitors = {
         );
       });
 
-      if (path.node.source.value.startsWith(".")) {
-        Stack.push(
-          nodeJsPath.join(
-            nodeJsPath.dirname(workinProcessPath),
-            path.node.source.value,
-          ),
-        );
-      } else {
-        Stack.push(path.node.source.value);
-      }
+      addDependencyPath(path.node.source.value);
       return;
     }
     if (t.isVariableDeclaration(path.node)) {
@@ -294,14 +287,7 @@ const visitors = {
         ]);
         // NOTE: If we need recursive traverse
         if (t.isImport(path.node.arguments[0].body.callee)) {
-          const importedPath = path.node.arguments[0].body.arguments[0].value;
-          importedPath &&
-            Stack.push(
-              nodeJsPath.join(
-                nodeJsPath.dirname(workInProcessingPath),
-                importedPath,
-              ),
-            );
+          addDependencyPath(path.node.arguments[0].body.arguments[0].value);
         }
         break;
       }
