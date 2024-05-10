@@ -10,11 +10,22 @@ import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
 const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
 
-let curerntProcessingPath = "";
-let queue = [];
+let workInProcessingPath = "";
 const handledFileNameSet = fs.existsSync("handled.json")
   ? new Set(...JSON.parse(fs.readFileSync("handled.json", "utf-8")))
   : new Set();
+const Stack = {
+  stack: [],
+  push: (...paths) => {
+    paths.forEach((path) => {
+      if (!handledFileNameSet.has(path)) console.log("Stack push: ", path);
+    });
+    Stack.stack.push(...paths);
+  },
+  pop: () => Stack.stack.pop(),
+  size: () => Stack.stack.length,
+  peek: () => Stack.stack[Stack.size() - 1],
+};
 
 /******************* Write and format ast to temp.json  *******************/
 const customWriteFile = (filePath, data) => {
@@ -146,7 +157,7 @@ const getPath = resolveAliasPath();
 const visitors = {
   Program: {
     enter: () => {
-      console.log(`strated path: \x1b[32m${curerntProcessingPath}\x1b[0m`);
+      console.log(`strated path: \x1b[32m${workInProcessingPath}\x1b[0m`);
     },
   },
   enter(path) {
@@ -154,20 +165,23 @@ const visitors = {
       path.node.specifiers.forEach((specifier) => {
         importSpecifierNameSet.add(
           specifier[
-            t.isImportDefaultSpecifier(specifier) ? "local" : "imported"
+            t.isImportDefaultSpecifier(specifier) ||
+            t.isImportNamespaceSpecifier(specifier)
+              ? "local"
+              : "imported"
           ].name,
         );
       });
 
       if (path.node.source.value.startsWith(".")) {
-        queue.push(
+        Stack.push(
           nodeJsPath.join(
-            nodeJsPath.dirname(curerntProcessingPath),
+            nodeJsPath.dirname(workinProcessPath),
             path.node.source.value,
           ),
         );
       } else {
-        queue.push(path.node.source.value);
+        Stack.push(path.node.source.value);
       }
       return;
     }
@@ -179,7 +193,7 @@ const visitors = {
         }
         if (t.isArrayPattern(declaration.id)) {
           declaration.id.elements?.forEach((element) => {
-            variableDeclaratorNameSet.add(element.name);
+            if (element?.name) variableDeclaratorNameSet.add(element.name);
           });
           return;
         }
@@ -282,9 +296,9 @@ const visitors = {
         if (t.isImport(path.node.arguments[0].body.callee)) {
           const importedPath = path.node.arguments[0].body.arguments[0].value;
           importedPath &&
-            queue.push(
+            Stack.push(
               nodeJsPath.join(
-                nodeJsPath.dirname(curerntProcessingPath),
+                nodeJsPath.dirname(workInProcessingPath),
                 importedPath,
               ),
             );
@@ -412,10 +426,6 @@ const visitors = {
           const referencePaths =
             path.scope.getBinding(path.parentPath.node.id.elements[1].name)
               ?.referencePaths || [];
-          inspect({
-            message: "updateSearchParams",
-            value: referencePaths,
-          });
           referencePaths.forEach((referencePath) => {
             referencePath.parentPath.replaceWith(
               t.callExpression(
@@ -857,21 +867,21 @@ const visitors = {
 
 /******************* Transform and traverse file  *******************/
 const transformFile = (filePaths = []) => {
-  queue.push(...filePaths);
+  Stack.push(...filePaths);
 
-  while (queue.length) {
-    const fullPaths = getPath(queue.pop());
+  while (Stack.size()) {
+    const fullPaths = getPath(Stack.pop());
     if (!fullPaths?.length) continue;
 
-    curerntProcessingPath = fullPaths.shift();
+    workInProcessingPath = fullPaths.shift();
 
-    if (fullPaths.length) queue.push(...fullPaths);
+    if (fullPaths.length) Stack.push(...fullPaths);
 
-    if (handledFileNameSet.has(curerntProcessingPath)) continue;
-    handledFileNameSet.add(curerntProcessingPath);
+    if (handledFileNameSet.has(workInProcessingPath)) continue;
+    handledFileNameSet.add(workInProcessingPath);
 
     // Get file path info, and traverse ast
-    const pathInfo = getPathInfo(curerntProcessingPath);
+    const pathInfo = getPathInfo(workInProcessingPath);
     const { code, ast, isFileWritted } = getAst(pathInfo, true) || {};
     if (!ast) continue;
     traverse.default(ast, visitors);
@@ -889,17 +899,16 @@ const transformFile = (filePaths = []) => {
       );
     }
   }
+};
 
+try {
+  transformFile([]);
   if (handledFileNameSet.size) {
     customWriteFile(
       "handled-files.json",
       JSON.stringify([...handledFileNameSet]),
     );
   }
-};
-
-try {
-  transformFile(["pages/exam/:id"]);
 } catch (error) {
   console.error(error);
 }
