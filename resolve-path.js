@@ -12,6 +12,9 @@ const resolveAliasPath = (tsConfigPath) => {
     );
   }
 
+  const isArray = Array.isArray;
+  const extensions = ["tsx", "ts"];
+
   const aliasPath = Object.entries(
     JSON.parse(fs.readFileSync(tsConfigPath, "utf8")).compilerOptions.paths,
   ).map(([alias, realPath]) => [
@@ -21,9 +24,12 @@ const resolveAliasPath = (tsConfigPath) => {
 
   return (inputPath) => {
     let lastFoundedAlias;
-    aliasPath.forEach(([alias, mappingPath]) => {
-      if (inputPath.startsWith(alias)) lastFoundedAlias = [alias, mappingPath];
-    });
+    if (typeof inputPath === "string") {
+      aliasPath.forEach(([alias, mappingPath]) => {
+        if (inputPath.startsWith(alias))
+          lastFoundedAlias = [alias, mappingPath];
+      });
+    }
 
     // Replace path with alias
     const filePath = lastFoundedAlias
@@ -31,18 +37,26 @@ const resolveAliasPath = (tsConfigPath) => {
           BASE_PATH,
           inputPath.replace(lastFoundedAlias[0], lastFoundedAlias[1]),
         )
-      : path.join(BASE_PATH, "src", inputPath);
+      : isArray(inputPath)
+        ? path.join(...inputPath)
+        : path.join(BASE_PATH, "src", inputPath);
 
     // Returns the path if it has an extension
     if (path.extname(filePath) && fs.existsSync(filePath)) return [filePath];
 
     let paths = [];
 
-    if (fs.existsSync(`${filePath}.tsx`)) paths.push(`${filePath}.tsx`);
+    // File path with extension
+    extensions.forEach((ext) => {
+      const p = `${filePath}.${ext}`;
+      if (fs.existsSync(p)) paths.push(p);
+    });
 
-    // Auto complete path with index.tsx
-    const autoCompletedPath = path.join(filePath, "index.tsx");
-    if (fs.existsSync(autoCompletedPath)) paths.push(autoCompletedPath);
+    // Auto complete path with index.ts(x)
+    extensions.forEach((ext) => {
+      const p = path.join(filePath, `index.${ext}`);
+      if (fs.existsSync(p)) paths.push(p);
+    });
 
     // Ignore third party packages that may not exist after we're processing at the above steps
     return paths.length ? paths : null;
@@ -62,6 +76,7 @@ const getPathInfo = (fullPath) => {
       return p;
     })
     .join("/");
+
   const testFileName = `${fileName}.test`;
   const testFileFullName = `${testFileName}${extension}`;
   const testFilePath = fullPath.replace(fullName, testFileFullName);

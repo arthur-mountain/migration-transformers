@@ -8,6 +8,8 @@ import t from "@babel/types";
 import { inspect } from "./inspect.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
+// For testing single file
+const __RECURSIVE__ = fasle;
 const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
 
 let workInProgressingPath = "";
@@ -22,10 +24,9 @@ const Stack = {
   peek: () => Stack.stack.at(-1),
 };
 const addDependencyPath = (path) => {
+  if (!__RECURSIVE__) return;
   if (/^\./.test(path)) {
-    Stack.push(
-      nodeJsPath.join(nodeJsPath.dirname(workInProgressingPath), path),
-    );
+    Stack.push([nodeJsPath.dirname(workInProgressingPath), path]);
   } else if (/^@\//.test(path)) {
     Stack.push(path);
   }
@@ -84,7 +85,8 @@ const getAst = (pathInfo, overwritten = false) => {
 
 /******************* Traverse utils *******************/
 let importSpecifierNameSet = new Set();
-let variableDeclaratorNameSet = new Set();
+// Check the identifier is exist but we should check the scope instead of this
+// let variableDeclaratorNameSet = new Set()
 
 // Create new import
 const createNewImportDeclaration = (path, importDeclaration) => {
@@ -112,7 +114,7 @@ const createNewImportDeclaration = (path, importDeclaration) => {
 // Next router utils
 const routerIdentifier = t.identifier("router");
 const createUseRouterVariableDeclaration = (path) => {
-  if (variableDeclaratorNameSet.has("router")) return routerIdentifier;
+  if (path.scope.hasBinding("router")) return routerIdentifier;
   if (!importSpecifierNameSet.has("useRouter")) {
     const useRouterIdentifier = t.identifier("useRouter");
     createNewImportDeclaration(
@@ -131,7 +133,7 @@ const createUseRouterVariableDeclaration = (path) => {
   path
     .findParent((p) => p.isBlockStatement())
     .unshiftContainer("body", useRouterDeclaration);
-  variableDeclaratorNameSet.add("router");
+  // variableDeclaratorNameSet.add("router");
 };
 
 const createJSXComments = ({
@@ -180,26 +182,26 @@ const visitors = {
       addDependencyPath(path.node.source.value);
       return;
     }
-    if (t.isVariableDeclaration(path.node)) {
-      path.node.declarations?.forEach((declaration) => {
-        if (t.isIdentifier(declaration.id)) {
-          variableDeclaratorNameSet.add(declaration.id.name);
-          return;
-        }
-        if (t.isArrayPattern(declaration.id)) {
-          declaration.id.elements?.forEach((element) => {
-            if (element?.name) variableDeclaratorNameSet.add(element.name);
-          });
-          return;
-        }
-        if (t.isObjectPattern(declaration.id)) {
-          declaration.properties?.forEach((property) => {
-            variableDeclaratorNameSet.add(property.value.name);
-          });
-          return;
-        }
-      });
-    }
+    // if (t.isVariableDeclaration(path.node)) {
+    //   path.node.declarations?.forEach((declaration) => {
+    //     if (t.isIdentifier(declaration.id)) {
+    //       variableDeclaratorNameSet.add(declaration.id.name);
+    //       return;
+    //     }
+    //     if (t.isArrayPattern(declaration.id)) {
+    //       declaration.id.elements?.forEach((element) => {
+    //         if (element?.name) variableDeclaratorNameSet.add(element.name);
+    //       });
+    //       return;
+    //     }
+    //     if (t.isObjectPattern(declaration.id)) {
+    //       declaration.properties?.forEach((property) => {
+    //         variableDeclaratorNameSet.add(property.value.name);
+    //       });
+    //       return;
+    //     }
+    //   });
+    // }
   },
   ImportDeclaration(path) {
     switch (path.node.source.value) {
