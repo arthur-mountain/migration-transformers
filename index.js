@@ -9,8 +9,26 @@ import { inspect } from "./inspect.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
 // For testing single file
-const __RECURSIVE__ = fasle;
 const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
+const mediator = {
+  __IS_RECURSIVE__: false,
+  __IS_PROD__: false,
+  __IS_PRINT_CODE__: true,
+  programPath: null,
+  getProgramPath: function (path) {
+    // path.scope.getProgramParent().path
+    return (
+      this.programPath ||
+      (this.programPath = path.findParent((p) => p.isProgram()))
+    );
+  },
+  printTransformedCode: function (ast, code) {
+    if (this.__IS_PRINT_CODE__)
+      console.log(
+        generate.default(ast, { retainLines: true, comments: true }, code).code,
+      );
+  },
+};
 
 let workInProgressingPath = "";
 const handledFileNameSet = fs.existsSync("handled.json")
@@ -24,9 +42,9 @@ const Stack = {
   peek: () => Stack.stack.at(-1),
 };
 const addDependencyPath = (path) => {
-  if (!__RECURSIVE__) return;
+  if (!mediator.__IS_RECURSIVE__) return;
+  Stack.push([nodeJsPath.dirname(workInProgressingPath), path]);
   if (/^\./.test(path)) {
-    Stack.push([nodeJsPath.dirname(workInProgressingPath), path]);
   } else if (/^@\//.test(path)) {
     Stack.push(path);
   }
@@ -34,6 +52,8 @@ const addDependencyPath = (path) => {
 
 /******************* Write and format ast to temp.json  *******************/
 const customWriteFile = (filePath, data) => {
+  if (!mediator.__IS_PROD__) return;
+
   const dirPath = nodeJsPath.dirname(filePath);
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -57,7 +77,8 @@ const getAst = (pathInfo, overwritten = false) => {
     !fs.existsSync(pathInfo.fullPath) ||
     [".d.ts", ".png", ".scss", ".css"].some((ext) => readedPath.endsWith(ext))
   ) {
-    fs.appendFileSync("un-handled-files.txt", `${readedPath}\n`);
+    if (mediator.__IS_PROD__)
+      fs.appendFileSync("un-handled-files.txt", `${readedPath}\n`);
     return;
   }
 
@@ -92,16 +113,14 @@ let importSpecifierNameSet = new Set();
 const createNewImportDeclaration = (path, importDeclaration) => {
   importDeclaration.specifiers = importDeclaration.specifiers.filter(
     (specifier) => {
-      return !importSpecifierNameSet.has(
+      return !path.scope.hasBinding(
         specifier[t.isImportDefaultSpecifier(specifier) ? "local" : "imported"]
           .name,
       );
     },
   );
   if (importDeclaration.specifiers?.length) {
-    path
-      .findParent((path) => path.isProgram())
-      .unshiftContainer("body", importDeclaration);
+    mediator.getProgramPath(path).unshiftContainer("body", importDeclaration);
     importDeclaration.specifiers.forEach((specifier) => {
       importSpecifierNameSet.add(
         specifier[t.isImportDefaultSpecifier(specifier) ? "local" : "imported"]
@@ -125,15 +144,11 @@ const createUseRouterVariableDeclaration = (path) => {
       ),
     );
   }
-  const useRouterVar = t.variableDeclarator(
-    routerIdentifier,
-    t.callExpression(t.identifier("useRouter"), []),
-  );
-  const useRouterDeclaration = t.variableDeclaration("const", [useRouterVar]);
-  path
-    .findParent((p) => p.isBlockStatement())
-    .unshiftContainer("body", useRouterDeclaration);
-  // variableDeclaratorNameSet.add("router");
+  path.scope.push({
+    kind: "const",
+    id: routerIdentifier,
+    init: t.callExpression(t.identifier("useRouter"), []),
+  });
 };
 
 const createJSXComments = ({
@@ -146,6 +161,18 @@ const createJSXComments = ({
   innerComments && (emptyJSXExpression.innerComments = innerComments);
   trailingComments && (emptyJSXExpression.trailingComments = trailingComments);
   return t.jsxExpressionContainer(emptyJSXExpression);
+};
+
+const insertCommentsBefore = (path, comments) => {
+  let current = path;
+  while (current) {
+    try {
+      path.insertBefore(comments);
+      current = null;
+    } catch {
+      current = current.parentPath;
+    }
+  }
 };
 
 const isTruthyValue = (node) =>
@@ -178,29 +205,28 @@ const visitors = {
           ].name,
         );
       });
-
       addDependencyPath(path.node.source.value);
       return;
     }
     // if (t.isVariableDeclaration(path.node)) {
-    //   path.node.declarations?.forEach((declaration) => {
+    //   path.node.declarations?.forEach(declaration => {
     //     if (t.isIdentifier(declaration.id)) {
-    //       variableDeclaratorNameSet.add(declaration.id.name);
-    //       return;
+    //       variableDeclaratorNameSet.add(declaration.id.name)
+    //       return
     //     }
     //     if (t.isArrayPattern(declaration.id)) {
-    //       declaration.id.elements?.forEach((element) => {
-    //         if (element?.name) variableDeclaratorNameSet.add(element.name);
-    //       });
-    //       return;
+    //       declaration.id.elements?.forEach(element => {
+    //         if (element?.name) variableDeclaratorNameSet.add(element.name)
+    //       })
+    //       return
     //     }
     //     if (t.isObjectPattern(declaration.id)) {
-    //       declaration.properties?.forEach((property) => {
-    //         variableDeclaratorNameSet.add(property.value.name);
-    //       });
-    //       return;
+    //       declaration.properties?.forEach(property => {
+    //         variableDeclaratorNameSet.add(property.value.name)
+    //       })
+    //       return
     //     }
-    //   });
+    //   })
     // }
   },
   ImportDeclaration(path) {
@@ -225,7 +251,7 @@ const visitors = {
         break;
       }
       case "@mui/lab/AdapterDateFns": {
-        // TODO: handling date-fn v3 , but there're different adapter
+        // TODO: handling difference date adapters
         path.replaceWith(
           t.importDeclaration(
             [t.importDefaultSpecifier(t.identifier("AdapterDateFnsV3"))],
@@ -265,6 +291,10 @@ const visitors = {
         path.remove();
         break;
       }
+      case "date-fns": {
+        if (!dateFnsImportPath) dateFnsImportPath = path;
+        break;
+      }
       default: {
         break;
       }
@@ -289,7 +319,7 @@ const visitors = {
             ? t.objectProperty(t.identifier("loading"), loadingProperty.value)
             : []),
         ]);
-        // NOTE: If we need recursive traverse
+
         if (t.isImport(path.node.arguments[0].body.callee)) {
           addDependencyPath(path.node.arguments[0].body.arguments[0].value);
         }
@@ -535,13 +565,6 @@ const visitors = {
   },
   JSXElement(path) {
     if (t.isJSXIdentifier(path.node.openingElement.name, { name: "img" })) {
-      createNewImportDeclaration(
-        path,
-        t.importDeclaration(
-          [t.importDefaultSpecifier(t.identifier("Image"))],
-          t.stringLiteral("next/image"),
-        ),
-      );
       const hasAllRequiredAttributes = ["src", "width", "height", "alt"].every(
         (attr) =>
           path.node.openingElement.attributes.some((attribute) =>
@@ -553,13 +576,21 @@ const visitors = {
         if (!path.node.openingElement.selfClosing) {
           path.node.closingElement.name = t.jsxIdentifier("Image");
         }
+        createNewImportDeclaration(
+          path,
+          t.importDeclaration(
+            [t.importDefaultSpecifier(t.identifier("Image"))],
+            t.stringLiteral("next/image"),
+          ),
+        );
       } else {
-        path.insertBefore(
+        insertCommentsBefore(
+          path,
           createJSXComments({
             innerComments: [
               {
                 type: "CommentBlock",
-                value: " Migration: replaces with next/image in the future. ",
+                value: "Migration: replaces with next/image in the future. ",
               },
             ],
           }),
@@ -590,7 +621,6 @@ const visitors = {
           t.stringLiteral("next/link"),
         ),
       );
-
       let lastStateAttribute;
       path.node.openingElement.attributes = path.node.openingElement.attributes
         .filter((attribute) => {
@@ -626,8 +656,8 @@ const visitors = {
       })
     ) {
       path.node.openingElement.attributes =
-        // TODO: There're different adapters
         path.node.openingElement.attributes.map((attribute) => {
+          // TODO: handling difference date adapters
           if (t.isJSXIdentifier(attribute.name, { name: "dateAdapter" })) {
             attribute.value = t.jsxExpressionContainer(
               t.identifier("AdapterDateFnsV3"),
@@ -689,7 +719,7 @@ const visitors = {
 
           const attributeExpression = attribute.value.expression;
           switch (attribute.name.name) {
-            // TODO: There're different adapters
+            // TODO: handling difference date adapters
             case "value": {
               switch (attributeExpression.type) {
                 // Example: attributeExpression.left || attributeExpression.right
@@ -782,20 +812,19 @@ const visitors = {
                   }
                 });
 
-              // TODO: Dynamic reorg pros an names
-              const TEST_INPUT = {
-                name: "testField",
-                componentName: "testTextField",
+              // TODO: make TEXT_INPUT be an option
+              const TEXT_INPUT = {
+                name: "testFieldA",
+                componentName: "testFieldB",
               };
-
               extraAttributes.push(
                 t.jsxAttribute(
                   t.jsxIdentifier("slots"),
                   t.jsxExpressionContainer(
                     t.objectExpression([
                       t.objectProperty(
-                        t.identifier(TEST_INPUT.name),
-                        t.identifier(TEST_INPUT.componentName),
+                        t.identifier(TEXT_INPUT.name),
+                        t.identifier(TEXT_INPUT.componentName),
                       ),
                     ]),
                   ),
@@ -807,7 +836,7 @@ const visitors = {
                   t.jsxExpressionContainer(
                     t.objectExpression([
                       t.objectProperty(
-                        t.identifier(TEST_INPUT.name),
+                        t.identifier(TEXT_INPUT.name),
                         t.objectExpression(objectProperties),
                       ),
                     ]),
@@ -875,8 +904,9 @@ const transformFile = (filePaths = []) => {
     const { code, ast, isFileWritted } = getAst(pathInfo, true) || {};
     if (!ast) continue;
     traverse.default(ast, visitors);
+    mediator.printTransformedCode(ast, code);
 
-    if (isFileWritted) {
+    if (mediator.__IS_PROD__ && isFileWritted) {
       // Write transformed ast
       customWriteFile(
         `traversed-asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`,
@@ -893,7 +923,7 @@ const transformFile = (filePaths = []) => {
 
 try {
   transformFile([]);
-  if (handledFileNameSet.size) {
+  if (mediator.__IS_PROD__ && handledFileNameSet.size) {
     customWriteFile(
       "handled-files.json",
       JSON.stringify([...handledFileNameSet]),
