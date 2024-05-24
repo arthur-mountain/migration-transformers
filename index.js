@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import nodeJsPath from "node:path";
+// import prettier from 'prettier'
 import parser from "@babel/parser";
 import traverse from "@babel/traverse";
 import generate from "@babel/generator";
@@ -8,32 +9,8 @@ import t from "@babel/types";
 import { inspect } from "./inspect.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
-// For testing single file
-const PARSER_PLUGINS = ["jsx", "typescript", "dynamicImport"];
-const mediator = {
-  __IS_RECURSIVE__: false,
-  __IS_PROD__: false,
-  __IS_PRINT_CODE__: true,
-  programPath: null,
-  getProgramPath: function (path) {
-    // path.scope.getProgramParent().path
-    return (
-      this.programPath ||
-      (this.programPath = path.findParent((p) => p.isProgram()))
-    );
-  },
-  printTransformedCode: function (ast, code) {
-    if (this.__IS_PRINT_CODE__)
-      console.log(
-        generate.default(ast, { retainLines: true, comments: true }, code).code,
-      );
-  },
-};
-
-let workInProgressingPath = "";
-const handledFileNameSet = fs.existsSync("handled.json")
-  ? new Set(...JSON.parse(fs.readFileSync("handled.json", "utf-8")))
-  : new Set();
+// FIXME: dynamic path
+const getPaths = resolveAliasPath("");
 const Stack = {
   stack: [],
   push: (...paths) => Stack.stack.push(...paths),
@@ -41,41 +18,207 @@ const Stack = {
   size: () => Stack.stack.length,
   peek: () => Stack.stack.at(-1),
 };
-const addDependencyPath = (path) => {
-  if (!mediator.__IS_RECURSIVE__) return;
-  Stack.push([nodeJsPath.dirname(workInProgressingPath), path]);
-  if (/^\./.test(path)) {
-  } else if (/^@\//.test(path)) {
-    Stack.push(path);
-  }
-};
 
-/******************* Write and format ast to temp.json  *******************/
-const customWriteFile = (filePath, data) => {
-  if (!mediator.__IS_PROD__) return;
+const mediator = {
+  // FIXME: dynamic
+  __DESTINATION_PATH__: "",
+  __START_PATHS__: [],
+  __DEBUG__: 0,
 
-  const dirPath = nodeJsPath.dirname(filePath);
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
-  fs.writeFile(filePath, data, "utf-8", (error) => {
-    if (error) throw error;
-    const child = spawn("yarn", ["prettier", "-w", filePath]);
-    child.on("close", () => {
-      console.log(
-        `writes file succussfully with path: \x1b[32m${filePath}\x1b[0m`,
+  // config
+  __IS_PROD__: 0,
+  __IS_RECURSIVE__: 0,
+  __IS_PRINT_CODE__: 0,
+  __AST_DESTINATION__: 0,
+  __TRANSFORMED_AST_DESTINATION__: 0,
+  __PARSER_PLUGINS__: ["jsx", "typescript", "dynamicImport"],
+
+  // states
+  workInProgrssingPath: "",
+  successFileMessages: new Set(),
+  failurePaths: new Set(),
+  importSpecifierNameSet: new Set(),
+  handledFilePathSet: new Set(),
+  initialHandledFilePathSet: null,
+  cachedProgramPath: null,
+
+  // methods
+  init: function () {
+    if (!this.__IS_PROD__) {
+      this.initialHandledFilePathSet = new Set(
+        JSON.parse(this.customReadFile("ignore-files.json")),
       );
-    });
-  });
+      return;
+    }
+    this.initialHandledFilePathSet = fs.existsSync("handled-files.json")
+      ? new Set([
+          ...JSON.parse(this.customReadFile("handled-files.json")),
+          ...JSON.parse(this.customReadFile("ignore-files.json")),
+        ])
+      : new Set(JSON.parse(this.customReadFile("ignore-files.json")));
+  },
+  getProgramPath: function (path) {
+    // path.scope.getProgramParent().path
+    return (
+      this.cachedProgramPath ||
+      (this.cachedProgramPath = path.findParent((p) => p.isProgram()))
+    );
+  },
+  printResults: function () {
+    if (this.successFileMessages.size) {
+      console.log(
+        [...this.successFileMessages]
+          .map((file) => `\x1b[32m✔ \x1b[0m${file}`)
+          .join("\n"),
+      );
+    }
+    if (this.failurePaths.size) {
+      console.log(
+        [...this.successFileMessages]
+          .map((file) => `\x1b[31m✖ \x1b[0m${file}`)
+          .join("\n"),
+      );
+    }
+  },
+  printDivider: function () {
+    console.log();
+    console.log(Array.from({ length: 106 }, () => "#").join(""));
+    console.log();
+  },
+  printTransformed: function (ast, code) {
+    if (!this.__IS_PRINT_CODE__) return;
+    console.log(
+      "current path is: ",
+      this.workInProgrssingPath,
+      this.fortmatCode(
+        generate.default(ast, { retainLines: true, comments: true }, code).code,
+      ),
+    );
+  },
+  addDependencyPath: function (path) {
+    if (!this.__IS_RECURSIVE__) return;
+    if (/^\./.test(path)) {
+      Stack.push([nodeJsPath.dirname(this.workInProgrssingPath), path]);
+    } else if (/^@\//.test(path)) {
+      Stack.push(path);
+    }
+  },
+  fortmatCode: function (code) {
+    // prettier.resolveConfigFile().then(filePath => {
+    //   prettier.resolveConfig(filePath).then(options => {
+    //     console.log(
+    //       prettier.format(code, {
+    //         ...options,
+    //         parser: 'typescript',
+    //       }),
+    //     )
+    //   })
+    // })
+    // return code
+    const { stdout, stderr, status } = spawnSync(
+      "yarn",
+      ["prettier", "--parser", "typescript"],
+      {
+        input: code,
+        encoding: "utf-8",
+      },
+    );
+    const isFailed = status !== 0;
+    if (isFailed) {
+      this.failurePaths.add(
+        [
+          "failed format file with path:",
+          `\x1b[31m${this.workInProgrssingPath}\x1b[0m`,
+        ].join(" "),
+      );
+      console.error("stderr", stderr);
+    }
+    return isFailed ? code : stdout;
+  },
+  // IO
+  customReadFile: function (filePath) {
+    return fs.readFileSync(filePath, "utf-8");
+  },
+  writeHandledPaths: function () {
+    if (!this.__DEBUG__ && this.handledFilePathSet.size) {
+      this.customWriteFile(
+        "handled-files.json",
+        JSON.stringify([
+          ...this.initialHandledFilePathSet,
+          ...this.handledFilePathSet,
+        ]),
+      );
+    }
+  },
+  writeASTJson: function (type, path, ast) {
+    let filePath;
+    if (type === "pre" && this.__AST_DESTINATION__) {
+      filePath =
+        typeof this.__AST_DESTINATION__ === "string"
+          ? this.__AST_DESTINATION__
+          : path;
+    } else if (type === "post" && this.__TRANSFORMED_AST_DESTINATION__) {
+      filePath =
+        typeof this.__TRANSFORMED_AST_DESTINATION__ === "string"
+          ? this.__TRANSFORMED_AST_DESTINATION__
+          : path;
+    }
+    if (filePath) {
+      this.customWriteFile(filePath, JSON.stringify(ast), true);
+    }
+  },
+  customWriteFile: function (filePath, data, forceWrite = false) {
+    const isWriteable = forceWrite || this.__IS_PROD__;
+    let dirname;
+    let outputPath = filePath;
+    if (isWriteable) {
+      if (this.__DEBUG__) {
+        dirname = new Date()
+          .toLocaleDateString()
+          .split("/")
+          .reverse()
+          .join("-");
+        outputPath = `${dirname}/${filePath.split("/").slice(-2).join("-")}`;
+      } else {
+        dirname = nodeJsPath.dirname(outputPath);
+      }
+      if (!fs.existsSync(dirname)) {
+        fs.mkdirSync(dirname, { recursive: true });
+      }
+      fs.writeFileSync(outputPath, data, "utf-8");
+      spawnSync("yarn", ["prettier", "-w", outputPath]);
+    }
+    this.successFileMessages.add(
+      [
+        isWriteable ? "" : "(print only)",
+        "writes file succussfully with path:",
+        `\x1b[32m${outputPath}\x1b[0m`,
+      ].join(" "),
+    );
+  },
+  customCopyFile: function (
+    from,
+    destionation,
+    flags = fs.constants.COPYFILE_FICLONE,
+  ) {
+    if (!fs.existsSync(from)) return;
+    if (this.__IS_PROD__) fs.copyFileSync(from, destionation, flags);
+    this.successFileMessages.add(
+      [
+        this.__IS_PROD__ ? "" : "(print only)",
+        "copy file succussfully with path:",
+        `\x1b[32m${destionation}\x1b[0m`,
+      ].join(" "),
+    );
+  },
 };
 
 /******************* Get ast   *******************/
 const getAst = (pathInfo, overwritten = false) => {
   const readedPath = pathInfo.fullPath;
-  // ignore files
   if (
     !fs.existsSync(pathInfo.fullPath) ||
-    [".d.ts", ".png", ".scss", ".css"].some((ext) => readedPath.endsWith(ext))
+    [".d.ts", ".png", ".scss"].some((ext) => readedPath.endsWith(ext))
   ) {
     if (mediator.__IS_PROD__)
       fs.appendFileSync("un-handled-files.txt", `${readedPath}\n`);
@@ -84,30 +227,31 @@ const getAst = (pathInfo, overwritten = false) => {
 
   const AST_PATH = `asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`;
   let returned = {
-    code: fs.readFileSync(readedPath, "utf-8"),
+    code: mediator.customReadFile(readedPath),
     ast: undefined,
-    isFileWritted: false,
+    isASTReParsed: false,
   };
   try {
     if (overwritten) throw new Error("Overwritten");
     if (fs.existsSync(AST_PATH)) {
-      returned.ast = JSON.parse(fs.readFileSync(AST_PATH, "utf-8"));
+      returned.ast = JSON.parse(mediator.customReadFile(AST_PATH));
     }
   } catch {
     returned.ast = parser.parse(returned.code, {
       sourceType: "module",
-      plugins: PARSER_PLUGINS,
+      plugins: mediator.__PARSER_PLUGINS__,
     });
-    customWriteFile(AST_PATH, JSON.stringify(returned.ast));
-    returned.isFileWritted = true;
+    mediator.writeASTJson("pre", AST_PATH, returned.ast);
+    returned.isASTReParsed = true;
   }
   return returned;
 };
 
 /******************* Traverse utils *******************/
-let importSpecifierNameSet = new Set();
 // Check the identifier is exist but we should check the scope instead of this
 // let variableDeclaratorNameSet = new Set()
+let muiDatePickersImportPath;
+let dateFnsImportPath;
 
 // Create new import
 const createNewImportDeclaration = (path, importDeclaration) => {
@@ -122,7 +266,7 @@ const createNewImportDeclaration = (path, importDeclaration) => {
   if (importDeclaration.specifiers?.length) {
     mediator.getProgramPath(path).unshiftContainer("body", importDeclaration);
     importDeclaration.specifiers.forEach((specifier) => {
-      importSpecifierNameSet.add(
+      mediator.importSpecifierNameSet.add(
         specifier[t.isImportDefaultSpecifier(specifier) ? "local" : "imported"]
           .name,
       );
@@ -134,7 +278,7 @@ const createNewImportDeclaration = (path, importDeclaration) => {
 const routerIdentifier = t.identifier("router");
 const createUseRouterVariableDeclaration = (path) => {
   if (path.scope.hasBinding("router")) return routerIdentifier;
-  if (!importSpecifierNameSet.has("useRouter")) {
+  if (!mediator.importSpecifierNameSet.has("useRouter")) {
     const useRouterIdentifier = t.identifier("useRouter");
     createNewImportDeclaration(
       path,
@@ -164,12 +308,14 @@ const createJSXComments = ({
 };
 
 const insertCommentsBefore = (path, comments) => {
+  let maxDepth = 2;
   let current = path;
   while (current) {
     try {
       path.insertBefore(comments);
-      current = null;
+      return;
     } catch {
+      if (--maxDepth < 0) return;
       current = current.parentPath;
     }
   }
@@ -180,23 +326,19 @@ const isTruthyValue = (node) =>
   !t.isNullLiteral(node) &&
   !(t.isIdentifier(node.init) && node.init.name === "undefined");
 
-let muiDatePickersImportPath;
-let dateFnsImportPath;
-
-// FIXME: Dynamic ts config path
-const getPath = resolveAliasPath();
-
 /******************* Traverse visitor   *******************/
-const visitors = {
+const visitor = {
   Program: {
     enter: () => {
-      console.log(`strated path: \x1b[32m${workInProgressingPath}\x1b[0m`);
+      console.log(
+        `🚀 strated path: \x1b[32m${mediator.workInProgrssingPath}\x1b[0m`,
+      );
     },
   },
   enter(path) {
     if (t.isImportDeclaration(path.node)) {
       path.node.specifiers.forEach((specifier) => {
-        importSpecifierNameSet.add(
+        mediator.importSpecifierNameSet.add(
           specifier[
             t.isImportDefaultSpecifier(specifier) ||
             t.isImportNamespaceSpecifier(specifier)
@@ -205,7 +347,7 @@ const visitors = {
           ].name,
         );
       });
-      addDependencyPath(path.node.source.value);
+      mediator.addDependencyPath(path.node.source.value);
       return;
     }
     // if (t.isVariableDeclaration(path.node)) {
@@ -246,12 +388,7 @@ const visitors = {
         path.remove();
         break;
       }
-      case "react-i18next": {
-        path.node.source = t.stringLiteral("next-i18next");
-        break;
-      }
       case "@mui/lab/AdapterDateFns": {
-        // TODO: handling difference date adapters
         path.replaceWith(
           t.importDeclaration(
             [t.importDefaultSpecifier(t.identifier("AdapterDateFnsV3"))],
@@ -264,14 +401,14 @@ const visitors = {
       case "@mui/lab/DatePicker":
       case "@mui/lab/DateTimePicker":
       case "@mui/lab/LocalizationProvider": {
+        const getSpecifierKey = (specifier) =>
+          t.isImportDefaultSpecifier(specifier) ? "local" : "imported";
         if (!muiDatePickersImportPath) {
           path.node.source = t.stringLiteral("@mui/x-date-pickers");
           path.node.specifiers = path.node.specifiers.map((specifier) =>
             t.importSpecifier(
               specifier.local,
-              t.isImportDefaultSpecifier(specifier)
-                ? specifier.local
-                : specifier.imported,
+              specifier[getSpecifierKey(specifier)],
             ),
           );
           muiDatePickersImportPath = path;
@@ -282,9 +419,7 @@ const visitors = {
           ...path.node.specifiers.map((specifier) =>
             t.importSpecifier(
               specifier.local,
-              t.isImportDefaultSpecifier(specifier)
-                ? specifier.local
-                : specifier.imported,
+              specifier[getSpecifierKey(specifier)],
             ),
           ),
         ];
@@ -293,6 +428,10 @@ const visitors = {
       }
       case "date-fns": {
         if (!dateFnsImportPath) dateFnsImportPath = path;
+        break;
+      }
+      case "react-i18next": {
+        path.node.source = t.stringLiteral("next-i18next");
         break;
       }
       default: {
@@ -321,7 +460,9 @@ const visitors = {
         ]);
 
         if (t.isImport(path.node.arguments[0].body.callee)) {
-          addDependencyPath(path.node.arguments[0].body.arguments[0].value);
+          mediator.addDependencyPath(
+            path.node.arguments[0].body.arguments[0].value,
+          );
         }
         break;
       }
@@ -466,7 +607,8 @@ const visitors = {
         break;
       }
       case "useLocation": {
-        const componentBlock = path.findParent((p) => p.isBlockStatement());
+        const componentBlock = path.scope.getFunctionParent().path.get("body");
+
         // Below has two pattern both of should be handled with
         // location.search replace to router.query, unshift to first line of block as new variableDeclaration
         // location.pathname replace to router.pathname,  unshift to first line of block as new variableDeclaration
@@ -590,7 +732,7 @@ const visitors = {
             innerComments: [
               {
                 type: "CommentBlock",
-                value: "Migration: replaces with next/image in the future. ",
+                value: "FIXME: replaces with next/image in the future. ",
               },
             ],
           }),
@@ -657,7 +799,7 @@ const visitors = {
     ) {
       path.node.openingElement.attributes =
         path.node.openingElement.attributes.map((attribute) => {
-          // TODO: handling difference date adapters
+          // TODO: differences adapter
           if (t.isJSXIdentifier(attribute.name, { name: "dateAdapter" })) {
             attribute.value = t.jsxExpressionContainer(
               t.identifier("AdapterDateFnsV3"),
@@ -675,7 +817,7 @@ const visitors = {
     ) {
       let extraAttributes = [];
 
-      if (!importSpecifierNameSet.has("renderTimeViewClock")) {
+      if (!mediator.importSpecifierNameSet.has("renderTimeViewClock")) {
         const muiRenderTimeViewSpecifier = t.identifier("renderTimeViewClock");
         muiDatePickersImportPath.node.specifiers.push(
           t.importSpecifier(
@@ -704,7 +846,7 @@ const visitors = {
             ),
           ),
         );
-        importSpecifierNameSet.add("renderTimeViewClock");
+        mediator.importSpecifierNameSet.add("renderTimeViewClock");
       }
 
       path.node.openingElement.attributes = path.node.openingElement.attributes
@@ -719,7 +861,7 @@ const visitors = {
 
           const attributeExpression = attribute.value.expression;
           switch (attribute.name.name) {
-            // TODO: handling difference date adapters
+            // TODO: differences adapter
             case "value": {
               switch (attributeExpression.type) {
                 // Example: attributeExpression.left || attributeExpression.right
@@ -761,7 +903,7 @@ const visitors = {
                   );
                 }
               }
-              if (!importSpecifierNameSet.has("toDate")) {
+              if (!mediator.importSpecifierNameSet.has("toDate")) {
                 const toDateIdentifier = t.identifier("toDate");
                 const toDateSpecifier = t.importSpecifier(
                   toDateIdentifier,
@@ -882,6 +1024,19 @@ const visitors = {
       }
     }
   },
+  MemberExpression: {
+    enter: (path) => {
+      if (
+        t.isIdentifier(path.node.object, { name: "process" }) &&
+        t.isIdentifier(path.node.property, { name: "env" }) &&
+        path.parent.property.name.startsWith("REACT_APP")
+      ) {
+        path.parent.property = t.identifier(
+          path.parent.property.name.replace("REACT_APP", "NEXT_PUBLIC"),
+        );
+      }
+    },
+  },
 };
 
 /******************* Transform and traverse file  *******************/
@@ -889,46 +1044,48 @@ const transformFile = (filePaths = []) => {
   Stack.push(...filePaths);
 
   while (Stack.size()) {
-    const fullPaths = getPath(Stack.pop());
+    const fullPaths = getPaths(Stack.pop());
     if (!fullPaths?.length) continue;
 
-    workInProgressingPath = fullPaths.shift();
+    mediator.workInProgrssingPath = fullPaths.shift();
 
     if (fullPaths.length) Stack.push(...fullPaths);
 
-    if (handledFileNameSet.has(workInProgressingPath)) continue;
-    handledFileNameSet.add(workInProgressingPath);
+    if (mediator.initialHandledFilePathSet.has(mediator.workInProgrssingPath))
+      continue;
+    mediator.handledFilePathSet.add(mediator.workInProgrssingPath);
 
     // Get file path info, and traverse ast
-    const pathInfo = getPathInfo(workInProgressingPath);
-    const { code, ast, isFileWritted } = getAst(pathInfo, true) || {};
+    const pathInfo = getPathInfo(mediator.workInProgrssingPath);
+    const { code, ast, isASTReParsed } = getAst(pathInfo, true) || {};
     if (!ast) continue;
-    traverse.default(ast, visitors);
-    mediator.printTransformedCode(ast, code);
+    traverse.default(ast, visitor);
+    mediator.printTransformed(ast, code);
+    mediator.writeASTJson(
+      "post",
+      `traversed-asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`,
+      ast,
+    );
 
-    if (mediator.__IS_PROD__ && isFileWritted) {
-      // Write transformed ast
-      customWriteFile(
-        `traversed-asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`,
-        JSON.stringify(ast),
-      );
-      // Write transformed code
-      customWriteFile(
-        `parsed/${pathInfo.outputPath}/${pathInfo.fullName}`,
+    if (isASTReParsed) {
+      mediator.customWriteFile(
+        `${mediator.__DESTINATION_PATH__}/${pathInfo.outputPath}/${pathInfo.fullName}`,
         generate.default(ast, { retainLines: true, comments: true }, code).code,
+      );
+      mediator.customCopyFile(
+        pathInfo.testFilePath,
+        `${mediator.__DESTINATION_PATH__}/${pathInfo.outputPath}/${pathInfo.testFileFullName}`,
       );
     }
   }
 };
 
 try {
-  transformFile([]);
-  if (mediator.__IS_PROD__ && handledFileNameSet.size) {
-    customWriteFile(
-      "handled-files.json",
-      JSON.stringify([...handledFileNameSet]),
-    );
-  }
+  mediator.init();
+  transformFile(mediator.__START_PATHS__);
+  mediator.writeHandledPaths();
+  mediator.printDivider();
+  mediator.printResults();
 } catch (error) {
   console.error(error);
 }
