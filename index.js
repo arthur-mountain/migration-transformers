@@ -9,8 +9,6 @@ import t from "@babel/types";
 import { inspect } from "./inspect.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
-// FIXME: dynamic path
-const getPaths = resolveAliasPath("");
 const Stack = {
   stack: [],
   push: (...paths) => Stack.stack.push(...paths),
@@ -43,6 +41,7 @@ const mediator = {
   cachedProgramPath: null,
 
   // methods
+  getPaths: function () {},
   init: function () {
     if (!this.__IS_PROD__) {
       this.initialHandledFilePathSet = new Set(
@@ -56,6 +55,8 @@ const mediator = {
           ...JSON.parse(this.customReadFile("ignore-files.json")),
         ])
       : new Set(JSON.parse(this.customReadFile("ignore-files.json")));
+    // FIXME: dynamic setup from cli(?) include __XXXX__
+    this.getPaths = resolveAliasPath("");
   },
   getProgramPath: function (path) {
     // path.scope.getProgramParent().path
@@ -1044,7 +1045,7 @@ const transformFile = (filePaths = []) => {
   Stack.push(...filePaths);
 
   while (Stack.size()) {
-    const fullPaths = getPaths(Stack.pop());
+    const fullPaths = mediator.getPaths(Stack.pop());
     if (!fullPaths?.length) continue;
 
     mediator.workInProgrssingPath = fullPaths.shift();
