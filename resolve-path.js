@@ -13,7 +13,7 @@ const resolveAliasPath = (tsConfigPath) => {
   }
 
   const isArray = Array.isArray;
-  const extensions = ["tsx", "ts"];
+  const extensions = ["tsx", ".test.tsx", "ts", ".test.ts"];
 
   const aliasPath = Object.entries(
     JSON.parse(fs.readFileSync(tsConfigPath, "utf8")).compilerOptions.paths,
@@ -48,13 +48,13 @@ const resolveAliasPath = (tsConfigPath) => {
 
     // File path with extension
     extensions.forEach((ext) => {
-      const p = `${filePath}.${ext}`;
+      const p = `${filePath}${ext}`;
       if (fs.existsSync(p)) paths.push(p);
     });
 
     // Auto complete path with index.ts(x)
     extensions.forEach((ext) => {
-      const p = path.join(filePath, `index.${ext}`);
+      const p = path.join(filePath, `index${ext}`);
       if (fs.existsSync(p)) paths.push(p);
     });
 

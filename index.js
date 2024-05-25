@@ -18,21 +18,31 @@ const Stack = {
 };
 
 const mediator = {
-  // FIXME: dynamic
-  __DESTINATION_PATH__: "",
+  // FIXME: 👇dynamic👇
+  __DEBUG__: 1, // always write local project
+  __DESTINATION_PATH__: "", // destination path;
   __START_PATHS__: [],
-  __DEBUG__: 0,
-
-  // config
-  __IS_PROD__: 0,
-  __IS_RECURSIVE__: 0,
-  __IS_PRINT_CODE__: 0,
-  __AST_DESTINATION__: 0,
-  __TRANSFORMED_AST_DESTINATION__: 0,
-  __PARSER_PLUGINS__: ["jsx", "typescript", "dynamicImport"],
+  // FIXME: 👆dynamic👆
+  __IS_PROD__: 0, // write file or not
+  __IS_RECURSIVE__: 0, // recursive or not
+  __IS_PRINT_CODE__: 0, // print code or not
+  __IS_COPY_TO_CLIPBOARD__: 0, // copy to clipboard or not
+  __AST_DESTINATION__: 0, // save ast or not
+  __TRANSFORMED_AST_DESTINATION__: 0, // save transformed ast or not
+  __PARSER_PLUGINS__: ["jsx", "typescript", "dynamicImport"], // parser plugins
+  _generateMessage: function (...args) {
+    return [
+      this.__IS_PROD__ ? (this.__DEBUG__ ? "(debug)" : "") : "(dev)",
+      ...args,
+    ].join(" ");
+  },
+  _generateUUID: function () {
+    let id = 0;
+    return () => id++;
+  },
 
   // states
-  workInProgrssingPath: "",
+  workinProgrssPath: "",
   successFileMessages: new Set(),
   failurePaths: new Set(),
   importSpecifierNameSet: new Set(),
@@ -41,8 +51,8 @@ const mediator = {
   cachedProgramPath: null,
 
   // methods
-  getPaths: function () {},
   init: function () {
+    this._generateUUID = this._generateUUID();
     if (!this.__IS_PROD__) {
       this.initialHandledFilePathSet = new Set(
         JSON.parse(this.customReadFile("ignore-files.json")),
@@ -55,8 +65,6 @@ const mediator = {
           ...JSON.parse(this.customReadFile("ignore-files.json")),
         ])
       : new Set(JSON.parse(this.customReadFile("ignore-files.json")));
-    // FIXME: dynamic setup from cli(?) include __XXXX__
-    this.getPaths = resolveAliasPath("");
   },
   getProgramPath: function (path) {
     // path.scope.getProgramParent().path
@@ -76,7 +84,7 @@ const mediator = {
     if (this.failurePaths.size) {
       console.log(
         [...this.successFileMessages]
-          .map((file) => `\x1b[31m✖ \x1b[0m${file}`)
+          .map((file) => `\x1b[31m✖\x1b[0m${file}`)
           .join("\n"),
       );
     }
@@ -88,18 +96,18 @@ const mediator = {
   },
   printTransformed: function (ast, code) {
     if (!this.__IS_PRINT_CODE__) return;
-    console.log(
-      "current path is: ",
-      this.workInProgrssingPath,
-      this.fortmatCode(
-        generate.default(ast, { retainLines: true, comments: true }, code).code,
-      ),
+    const formtedCode = this.fortmatCode(
+      generate.default(ast, { retainLines: true, comments: true }, code).code,
     );
+    console.log("current path is: ", this.workinProgrssPath, formtedCode);
+    if (this.__IS_COPY_TO_CLIPBOARD__) {
+      spawnSync("pbcopy", { input: formtedCode, encoding: "utf8" });
+    }
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
     if (/^\./.test(path)) {
-      Stack.push([nodeJsPath.dirname(this.workInProgrssingPath), path]);
+      Stack.push([nodeJsPath.dirname(this.workinProgrssPath), path]);
     } else if (/^@\//.test(path)) {
       Stack.push(path);
     }
@@ -127,10 +135,10 @@ const mediator = {
     const isFailed = status !== 0;
     if (isFailed) {
       this.failurePaths.add(
-        [
+        this._generateMessage(
           "failed format file with path:",
-          `\x1b[31m${this.workInProgrssingPath}\x1b[0m`,
-        ].join(" "),
+          `\x1b[31m${this.workinProgrssPath}\x1b[0m`,
+        ),
       );
       console.error("stderr", stderr);
     }
@@ -179,22 +187,22 @@ const mediator = {
           .split("/")
           .reverse()
           .join("-");
-        outputPath = `${dirname}/${filePath.split("/").slice(-2).join("-")}`;
+        outputPath = `${dirname}/${this._generateUUID()}-${filePath.split("/").at(-1)}`;
       } else {
         dirname = nodeJsPath.dirname(outputPath);
       }
       if (!fs.existsSync(dirname)) {
         fs.mkdirSync(dirname, { recursive: true });
       }
+
       fs.writeFileSync(outputPath, data, "utf-8");
       spawnSync("yarn", ["prettier", "-w", outputPath]);
     }
     this.successFileMessages.add(
-      [
-        isWriteable ? "" : "(print only)",
+      this._generateMessage(
         "writes file succussfully with path:",
         `\x1b[32m${outputPath}\x1b[0m`,
-      ].join(" "),
+      ),
     );
   },
   customCopyFile: function (
@@ -202,14 +210,25 @@ const mediator = {
     destionation,
     flags = fs.constants.COPYFILE_FICLONE,
   ) {
+    if (!this.__IS_PROD__) return;
     if (!fs.existsSync(from)) return;
-    if (this.__IS_PROD__) fs.copyFileSync(from, destionation, flags);
+
+    let dirname;
+    let outputPath = destionation;
+    if (this.__DEBUG__) {
+      dirname = new Date().toLocaleDateString().split("/").reverse().join("-");
+      outputPath = `${dirname}/${this._generateUUID()}-${destionation.split("/").at(-1)}`;
+    } else {
+      dirname = nodeJsPath.dirname(outputPath);
+    }
+    if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true });
+
+    fs.copyFileSync(from, outputPath, flags);
     this.successFileMessages.add(
-      [
-        this.__IS_PROD__ ? "" : "(print only)",
+      this._generateMessage(
         "copy file succussfully with path:",
-        `\x1b[32m${destionation}\x1b[0m`,
-      ].join(" "),
+        `\x1b[32m${outputPath}\x1b[0m`,
+      ),
     );
   },
 };
