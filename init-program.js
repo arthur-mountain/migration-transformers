@@ -8,7 +8,7 @@ import PACKAGE_JSON from "./package.json" assert { type: "json" };
 // Add validation for `from` and `to`,
 // that depend which transformer will be used if implemented
 // and also needs to update messages
-const validate = function (from, to, paths, option, command) {
+const validate = (from, to, paths, option, command) => {
   try {
     // TODO: Check the transformer is implemented
     // throw new Error("Invalid transformer from/to self was not implemented");
