@@ -27,7 +27,7 @@ const Stack = {
 
 const context = {
   __ENABLED__: 0, // enabled traverse or not for sometimes we want test context only without traverse.
-  __DESTINATION_PATH__: "", // destination path; TODO: what should do after transformed, write local file path for test.
+  __DESTINATION_PATH__: "", // destination path;  TODO: what should do after transformed, write local file path for test.
   __DEBUG__: 0, // if debug is enabled, rewrite destination to current folder and not write any traversed records.
   __START_PATHS__: [], // the file paths should be traversed
   __IS_WRITE_FILE__: 0, // IO side effects, write file or not
@@ -49,9 +49,9 @@ const context = {
   },
 
   // states
-  workInProgrssingPath: "", // current working path
-  successFileMessages: new Set(), // successfully traversed and formatted files
-  failurePaths: new Set(), // failures traversed or formatted files
+  workInProgressingPath: "", // current working path
+  successFileMessageSet: new Set(), // successfully traversed and formatted files
+  failureFileMessageSet: new Set(), // failures traversed or formatted files
   importSpecifierNameSet: new Set(), // import specifier names, TODO: check the better implementation instead of manually tracking it
   handledFilePathSet: new Set(), // successfully handled file paths
   initialHandledFilePathSet: null, // initial handled file paths from handled-files.json that written before
@@ -65,11 +65,6 @@ const context = {
       ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
       : new Set();
     this.cmdProgram = initProgramCommand(this);
-    Object.entries(this).forEach(([key, value]) => {
-      if (key.startsWith("__")) {
-        console.log(key, value);
-      }
-    });
   },
   getProgramPath: function (path) {
     // path.scope.getProgramParent().path
@@ -79,16 +74,16 @@ const context = {
     );
   },
   printResults: function () {
-    if (this.successFileMessages.size) {
+    if (this.successFileMessageSet.size) {
       console.log(
-        [...this.successFileMessages]
+        [...this.successFileMessageSet]
           .map((file) => `${pc.green("✔")} ${pc.bold(file)}`)
           .join("\n"),
       );
     }
-    if (this.failurePaths.size) {
+    if (this.failureFileMessageSet.size) {
       console.log(
-        [...this.successFileMessages]
+        [...this.failureFileMessageSet]
           .map((file) => `${pc.red("✖")} ${pc.bold(file)}`)
           .join("\n"),
       );
@@ -96,15 +91,14 @@ const context = {
   },
   printDivider: function (...contents) {
     if (contents?.length) {
-      console.log(Array.from({ length: 106 }, () => "#").join(""));
+      console.log(Array.from({ length: 99 }, () => "#").join(""));
       console.log(...contents);
-      console.log(Array.from({ length: 106 }, () => "#").join(""));
+      console.log(Array.from({ length: 99 }, () => "#").join(""));
     } else {
       console.log();
-      console.log(Array.from({ length: 106 }, () => "#").join(""));
+      console.log(Array.from({ length: 99 }, () => "#").join(""));
       console.log();
     }
-    return this._safeExit();
   },
   printTransformed: function (ast, code) {
     if (!this.__IS_PRINT_CODE__) return;
@@ -115,13 +109,13 @@ const context = {
       spawnSync("pbcopy", { input: formattedCode, encoding: "utf8" });
     }
     this.printDivider(
-      `current path: ${pc.green(pc.bold(this.workinProgrssPath))}, \n ${formattedCode}`,
+      `current path: ${pc.green(pc.bold(this.workInProgressingPath))},\n ${formattedCode}`,
     );
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
     if (/^\./.test(path)) {
-      Stack.push([nodeJsPath.dirname(this.workinProgrssPath), path]);
+      Stack.push([nodeJsPath.dirname(this.workInProgressingPath), path]);
     } else if (/^@\//.test(path)) {
       Stack.push(path);
     }
@@ -130,16 +124,13 @@ const context = {
     const { stdout, stderr, status } = spawnSync(
       "yarn",
       ["prettier", "--parser", "typescript"],
-      {
-        input: code,
-        encoding: "utf-8",
-      },
+      { input: code, encoding: "utf-8" },
     );
     if (status !== 0) {
       this.failurePaths.add(
         this._generateMessage(
           "failed format file with path:",
-          `${pc.red(pc.bold(this.workinProgrssPath))}`,
+          `${pc.red(pc.bold(this.workInProgressingPath))}`,
         ),
       );
       console.error("prettier stderr: ", pc.red(stderr));
@@ -201,7 +192,7 @@ const context = {
       fs.writeFileSync(outputPath, data, "utf-8");
       spawnSync("yarn", ["prettier", "-w", outputPath]);
     }
-    this.successFileMessages.add(
+    this.successFileMessageSet.add(
       this._generateMessage(
         "writes file succussfully with path:",
         `${pc.green(pc.bold(outputPath))}`,
@@ -226,7 +217,7 @@ const context = {
     }
     if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true });
     fs.copyFileSync(from, outputPath, flags);
-    this.successFileMessages.add(
+    this.successFileMessageSet.add(
       this._generateMessage(
         "copy file succussfully with path:",
         `${pc.green(pc.bold(outputPath))}`,
@@ -368,7 +359,7 @@ const visitor = {
   Program: {
     enter: () => {
       console.log(
-        `🚀 strated path: ${pc.green(pc.bold(mediator.workInProgrssingPath))}`,
+        `🚀 strated path: ${pc.green(pc.bold(mediator.workInProgressingPath))}`,
       );
     },
   },
@@ -387,26 +378,6 @@ const visitor = {
       mediator.addDependencyPath(path.node.source.value);
       return;
     }
-    // if (t.isVariableDeclaration(path.node)) {
-    //   path.node.declarations?.forEach(declaration => {
-    //     if (t.isIdentifier(declaration.id)) {
-    //       variableDeclaratorNameSet.add(declaration.id.name)
-    //       return
-    //     }
-    //     if (t.isArrayPattern(declaration.id)) {
-    //       declaration.id.elements?.forEach(element => {
-    //         if (element?.name) variableDeclaratorNameSet.add(element.name)
-    //       })
-    //       return
-    //     }
-    //     if (t.isObjectPattern(declaration.id)) {
-    //       declaration.properties?.forEach(property => {
-    //         variableDeclaratorNameSet.add(property.value.name)
-    //       })
-    //       return
-    //     }
-    //   })
-    // }
   },
   ImportDeclaration(path) {
     switch (path.node.source.value) {
@@ -425,6 +396,7 @@ const visitor = {
         path.remove();
         break;
       }
+      // TODO: there`re differences adapter for date
       case "@mui/lab/AdapterDateFns": {
         path.replaceWith(
           t.importDeclaration(
@@ -790,6 +762,7 @@ const visitor = {
       if (!path.node.openingElement.selfClosing) {
         path.node.closingElement.name = t.jsxIdentifier("Link");
       }
+      return;
     }
 
     if (t.isJSXIdentifier(path.node.openingElement.name, { name: "Link" })) {
@@ -827,6 +800,7 @@ const visitor = {
           }
           return attribute;
         });
+      return;
     }
 
     if (
@@ -836,7 +810,7 @@ const visitor = {
     ) {
       path.node.openingElement.attributes =
         path.node.openingElement.attributes.map((attribute) => {
-          // TODO: differences adapter
+          // TODO: there`re differences adapter for date
           if (t.isJSXIdentifier(attribute.name, { name: "dateAdapter" })) {
             attribute.value = t.jsxExpressionContainer(
               t.identifier("AdapterDateFnsV3"),
@@ -844,6 +818,7 @@ const visitor = {
           }
           return attribute;
         });
+      return;
     }
 
     if (
@@ -1032,7 +1007,10 @@ const visitor = {
         })
         .filter(Boolean);
 
-      path.node.openingElement.attributes.push(...extraAttributes);
+      if (extraAttributes.length) {
+        path.node.openingElement.attributes.push(...extraAttributes);
+      }
+      return;
     }
 
     if (
@@ -1059,6 +1037,7 @@ const visitor = {
       if (!path.node.openingElement.selfClosing) {
         path.node.closingElement.name = t.jsxIdentifier("Link");
       }
+      return;
     }
   },
   MemberExpression: {
@@ -1084,17 +1063,19 @@ const transformFile = (filePaths = []) => {
     const fullPaths = mediator.getPaths(Stack.pop());
     if (!fullPaths?.length) continue;
 
-    mediator.workInProgrssingPath = fullPaths.shift();
+    mediator.workInProgressingPath = fullPaths.shift();
 
     if (fullPaths.length) Stack.push(...fullPaths);
 
-    if (mediator.initialHandledFilePathSet.has(mediator.workInProgrssingPath)) {
+    if (
+      mediator.initialHandledFilePathSet.has(mediator.workInProgressingPath)
+    ) {
       continue;
     }
-    mediator.handledFilePathSet.add(mediator.workInProgrssingPath);
+    mediator.handledFilePathSet.add(mediator.workInProgressingPath);
 
     // Get file path info, and traverse ast
-    const pathInfo = getPathInfo(mediator.workInProgrssingPath);
+    const pathInfo = getPathInfo(mediator.workInProgressingPath);
     const { code, ast, isASTReParsed } = getAst(pathInfo, true) || {};
     if (!ast) continue;
     traverse.default(ast, visitor);
