@@ -40,7 +40,7 @@ const validate = (from, to, paths, option, command) => {
   }
 };
 
-const initProgram = (context) => {
+const initProgramCommand = (context) => {
   const program = new Command(PACKAGE_JSON.name)
     .version(PACKAGE_JSON.version)
     .description(PACKAGE_JSON.description)
@@ -104,4 +104,4 @@ const initProgram = (context) => {
   return program;
 };
 
-export { initProgram };
+export { initProgramCommand };

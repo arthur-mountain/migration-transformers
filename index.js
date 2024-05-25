@@ -9,7 +9,7 @@ import traverse from "@babel/traverse";
 import generate from "@babel/generator";
 import t from "@babel/types";
 import { inspect } from "./inspect.js";
-import { initProgram } from "./init-program.js";
+import { initProgramCommand } from "./init-program.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
 const handleSigTerm = () => process.exit(0);
@@ -26,7 +26,7 @@ const Stack = {
 };
 
 const context = {
-  __ENABLED__: 0,
+  __ENABLED__: 0, // enabled traverse or not for sometimes we want test context only without traverse.
   __DESTINATION_PATH__: "", // destination path; TODO: what should do after transformed, write local file path for test.
   __DEBUG__: 0, // if debug is enabled, rewrite destination to current folder and not write any traversed records.
   __START_PATHS__: [], // the file paths should be traversed
@@ -64,7 +64,7 @@ const context = {
     this.initialHandledFilePathSet = fs.existsSync("handled-files.json")
       ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
       : new Set();
-    this.cmdProgram = initProgram(this);
+    this.cmdProgram = initProgramCommand(this);
     Object.entries(this).forEach(([key, value]) => {
       if (key.startsWith("__")) {
         console.log(key, value);
