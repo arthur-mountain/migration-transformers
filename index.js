@@ -7,6 +7,7 @@ import traverse from "@babel/traverse";
 import generate from "@babel/generator";
 import t from "@babel/types";
 import { inspect } from "./inspect.js";
+import { parseArgs } from "./parse-args.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
 
 const Stack = {
@@ -19,20 +20,20 @@ const Stack = {
 
 const mediator = {
   // FIXME: 👇dynamic👇
-  __DEBUG__: 1, // always write local project
+  __DEBUG__: 0, // if debug is enabled, rewrite destination to current folder and not write any traversed records.
   __DESTINATION_PATH__: "", // destination path;
   __START_PATHS__: [],
   // FIXME: 👆dynamic👆
-  __IS_PROD__: 0, // write file or not
-  __IS_RECURSIVE__: 0, // recursive or not
-  __IS_PRINT_CODE__: 0, // print code or not
+  __IS_WRITE_FILE__: 0, // IO side effects, write file or not
+  __IS_RECURSIVE__: 0, //  recursively traverse dependencies or not
+  __IS_PRINT_CODE__: 0, // print source code or not
   __IS_COPY_TO_CLIPBOARD__: 0, // copy to clipboard or not
-  __AST_DESTINATION__: 0, // save ast or not
-  __TRANSFORMED_AST_DESTINATION__: 0, // save transformed ast or not
+  __AST_DESTINATION__: 0, // save ast before traverse or not
+  __TRANSFORMED_AST_DESTINATION__: 0, // save ast after traverse or not
   __PARSER_PLUGINS__: ["jsx", "typescript", "dynamicImport"], // parser plugins
   _generateMessage: function (...args) {
     return [
-      this.__IS_PROD__ ? (this.__DEBUG__ ? "(debug)" : "") : "(dev)",
+      this.__IS_WRITE_FILE__ ? (this.__DEBUG__ ? "(debug)" : "") : "(dev)",
       ...args,
     ].join(" ");
   },
@@ -53,18 +54,12 @@ const mediator = {
   // methods
   init: function () {
     this._generateUUID = this._generateUUID();
-    if (!this.__IS_PROD__) {
-      this.initialHandledFilePathSet = new Set(
-        JSON.parse(this.customReadFile("ignore-files.json")),
-      );
-      return;
-    }
     this.initialHandledFilePathSet = fs.existsSync("handled-files.json")
-      ? new Set([
-          ...JSON.parse(this.customReadFile("handled-files.json")),
-          ...JSON.parse(this.customReadFile("ignore-files.json")),
-        ])
-      : new Set(JSON.parse(this.customReadFile("ignore-files.json")));
+      ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
+      : new Set();
+    Object.entries(parseArgs()).forEach(([key, value]) => {
+      this[key] = value;
+    });
   },
   getProgramPath: function (path) {
     // path.scope.getProgramParent().path
@@ -84,7 +79,7 @@ const mediator = {
     if (this.failurePaths.size) {
       console.log(
         [...this.successFileMessages]
-          .map((file) => `\x1b[31m✖\x1b[0m${file}`)
+          .map((file) => `\x1b[31m✖ \x1b[0m${file}`)
           .join("\n"),
       );
     }
@@ -177,7 +172,7 @@ const mediator = {
     }
   },
   customWriteFile: function (filePath, data, forceWrite = false) {
-    const isWriteable = forceWrite || this.__IS_PROD__;
+    const isWriteable = forceWrite || this.__IS_WRITE_FILE__;
     let dirname;
     let outputPath = filePath;
     if (isWriteable) {
@@ -210,7 +205,7 @@ const mediator = {
     destionation,
     flags = fs.constants.COPYFILE_FICLONE,
   ) {
-    if (!this.__IS_PROD__) return;
+    if (!this.__IS_WRITE_FILE__) return;
     if (!fs.existsSync(from)) return;
 
     let dirname;
@@ -240,7 +235,7 @@ const getAst = (pathInfo, overwritten = false) => {
     !fs.existsSync(pathInfo.fullPath) ||
     [".d.ts", ".png", ".scss"].some((ext) => readedPath.endsWith(ext))
   ) {
-    if (mediator.__IS_PROD__)
+    if (mediator.__IS_WRITE_FILE__)
       fs.appendFileSync("un-handled-files.txt", `${readedPath}\n`);
     return;
   }
