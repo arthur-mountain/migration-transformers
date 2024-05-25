@@ -59,7 +59,11 @@ const resolveAliasPath = (tsConfigPath) => {
     });
 
     // Ignore third party packages that may not exist after we're processing at the above steps
-    return paths.length ? paths : null;
+    // FIXME: this is workaround for removed the path that replaced with alias or base path
+    // otherwise the base path add twice at beginning of the path
+    return paths.length
+      ? paths.map((p, i) => (i ? p.replace(BASE_PATH + "/src/", "") : p))
+      : null;
   };
 };
 
@@ -71,9 +75,11 @@ const getPathInfo = (fullPath) => {
   const outputPath = path
     .dirname(fullPath.replace(`${BASE_PATH}/src/`, ""))
     .split("/")
-    .map((p) => {
-      if (p.startsWith(":")) return `[${p.slice(1)}]`;
-      return p;
+    .map((p, i, o) => {
+      if (p.startsWith(":")) {
+        const key = o[i - 1].endsWith("s") ? o[i - 1].slice(0, -1) : "id";
+        return `[${key}]`;
+      }
     })
     .join("/");
 

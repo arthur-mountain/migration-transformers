@@ -25,7 +25,7 @@ const Stack = {
   peek: () => Stack.stack.at(-1),
 };
 
-const mediator = {
+const context = {
   __ENABLED__: 0,
   __DESTINATION_PATH__: "", // destination path; TODO: what should do after transformed, write local file path for test.
   __DEBUG__: 0, // if debug is enabled, rewrite destination to current folder and not write any traversed records.
@@ -108,14 +108,15 @@ const mediator = {
   },
   printTransformed: function (ast, code) {
     if (!this.__IS_PRINT_CODE__) return;
-    const formtedCode = this.fortmatCode(
+    const formattedCode = this.fortmatCode(
       generate.default(ast, { retainLines: true, comments: true }, code).code,
     );
-    console.log("current path is: ", this.workinProgrssPath, formtedCode);
     if (this.__IS_COPY_TO_CLIPBOARD__) {
-      spawnSync("pbcopy", { input: formtedCode, encoding: "utf8" });
+      spawnSync("pbcopy", { input: formattedCode, encoding: "utf8" });
     }
-    this.printDivider(formtedCode);
+    this.printDivider(
+      `current path: ${pc.green(pc.bold(this.workinProgrssPath))}, \n ${formattedCode}`,
+    );
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
@@ -126,17 +127,6 @@ const mediator = {
     }
   },
   fortmatCode: function (code) {
-    // prettier.resolveConfigFile().then(filePath => {
-    //   prettier.resolveConfig(filePath).then(options => {
-    //     console.log(
-    //       prettier.format(code, {
-    //         ...options,
-    //         parser: 'typescript',
-    //       }),
-    //     )
-    //   })
-    // })
-    // return code
     const { stdout, stderr, status } = spawnSync(
       "yarn",
       ["prettier", "--parser", "typescript"],
@@ -145,8 +135,7 @@ const mediator = {
         encoding: "utf-8",
       },
     );
-    const isFailed = status !== 0;
-    if (isFailed) {
+    if (status !== 0) {
       this.failurePaths.add(
         this._generateMessage(
           "failed format file with path:",
@@ -154,8 +143,9 @@ const mediator = {
         ),
       );
       console.error("prettier stderr: ", pc.red(stderr));
+      return code;
     }
-    return isFailed ? code : stdout;
+    return stdout;
   },
   // IO
   customReadFile: function (filePath) {
@@ -174,6 +164,7 @@ const mediator = {
   },
   writeASTJson: function (type, path, ast) {
     let filePath;
+
     if (type === "pre" && this.__AST_DESTINATION__) {
       filePath =
         typeof this.__AST_DESTINATION__ === "string"
@@ -185,12 +176,14 @@ const mediator = {
           ? this.__TRANSFORMED_AST_DESTINATION__
           : path;
     }
+
     if (filePath) {
       this.customWriteFile(filePath, JSON.stringify(ast), true);
     }
   },
   customWriteFile: function (filePath, data, forceWrite = false) {
     const isWriteable = forceWrite || this.__IS_WRITE_FILE__;
+
     let dirname;
     let outputPath = filePath;
     if (isWriteable) {
@@ -232,7 +225,6 @@ const mediator = {
       dirname = nodeJsPath.dirname(outputPath);
     }
     if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true });
-
     fs.copyFileSync(from, outputPath, flags);
     this.successFileMessages.add(
       this._generateMessage(
@@ -243,15 +235,30 @@ const mediator = {
   },
 };
 
+const mediator = new Proxy(context, {
+  get: function (target, prop, receiver) {
+    return Reflect.get(target, prop, receiver);
+  },
+  set: function (target, prop, value, receiver) {
+    if (["__PARSER_PLUGINS__", "__DESTINATION_PATH__"].includes(prop)) {
+      console.error(`proxy setter error: ${pc.red(errorMessage)}`);
+      return false;
+    }
+    return Reflect.set(target, prop, value, receiver);
+  },
+});
+
 /******************* Get ast   *******************/
 const getAst = (pathInfo, overwritten = false) => {
   const readedPath = pathInfo.fullPath;
   if (
     !fs.existsSync(pathInfo.fullPath) ||
+    // TODO: should be dynamic from command option
     [".d.ts", ".png", ".scss"].some((ext) => readedPath.endsWith(ext))
   ) {
-    if (mediator.__IS_WRITE_FILE__)
+    if (mediator.__IS_WRITE_FILE__) {
       fs.appendFileSync("un-handled-files.txt", `${readedPath}\n`);
+    }
     return;
   }
 
@@ -1081,8 +1088,9 @@ const transformFile = (filePaths = []) => {
 
     if (fullPaths.length) Stack.push(...fullPaths);
 
-    if (mediator.initialHandledFilePathSet.has(mediator.workInProgrssingPath))
+    if (mediator.initialHandledFilePathSet.has(mediator.workInProgrssingPath)) {
       continue;
+    }
     mediator.handledFilePathSet.add(mediator.workInProgrssingPath);
 
     // Get file path info, and traverse ast
@@ -1101,10 +1109,6 @@ const transformFile = (filePaths = []) => {
       mediator.customWriteFile(
         `${mediator.__DESTINATION_PATH__}/${pathInfo.outputPath}/${pathInfo.fullName}`,
         generate.default(ast, { retainLines: true, comments: true }, code).code,
-      );
-      mediator.customCopyFile(
-        pathInfo.testFilePath,
-        `${mediator.__DESTINATION_PATH__}/${pathInfo.outputPath}/${pathInfo.testFileFullName}`,
       );
     }
   }

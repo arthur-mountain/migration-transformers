@@ -58,6 +58,9 @@ const initProgram = (context) => {
     .option("--ast", "AST destination")
     .option("--ast-before", "AST before destination")
     .option("--ast-after", "AST after destination")
+    // TODO: Add more options
+    // .option("-ext, --extension <ext...>", "the extensions of files")
+    // .option("-iext, --igore-extension <iext...>", "the extensions of ignore files")
     .allowUnknownOption()
     .action(validate)
     .parse(process.argv);
