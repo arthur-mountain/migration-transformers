@@ -130,7 +130,7 @@ const context = {
       this.failurePaths.add(
         this._generateMessage(
           "failed format file with path:",
-          `${pc.red(pc.bold(this.workInProgressingPath))}`,
+          pc.red(pc.bold(this.workInProgressingPath)),
         ),
       );
       console.error("prettier stderr: ", pc.red(stderr));
@@ -195,7 +195,7 @@ const context = {
     this.successFileMessageSet.add(
       this._generateMessage(
         "writes file succussfully with path:",
-        `${pc.green(pc.bold(outputPath))}`,
+        pc.green(pc.bold(outputPath)),
       ),
     );
   },
@@ -220,7 +220,7 @@ const context = {
     this.successFileMessageSet.add(
       this._generateMessage(
         "copy file succussfully with path:",
-        `${pc.green(pc.bold(outputPath))}`,
+        pc.green(pc.bold(outputPath)),
       ),
     );
   },
