@@ -55,9 +55,9 @@ const initProgramCommand = (context) => {
     .option("-c, --copy", "copy to clipboard")
     .option("-p, --print", "print code")
     .option("-r, --recursive", "recursive operation")
-    .option("--ast", "AST destination")
-    .option("--ast-before", "AST before destination")
-    .option("--ast-after", "AST after destination")
+    .option("--ast", "write to destination before/after AST be traversed")
+    .option("--ast-before", "write to destination before AST be traversed")
+    .option("--ast-after", "write to destination after AST be traversed")
     // TODO: Add more options
     // .option("-ext, --extension <ext...>", "the extensions of files")
     // .option("-iext, --igore-extension <iext...>", "the extensions of ignore files")
