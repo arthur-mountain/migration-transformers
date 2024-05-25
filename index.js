@@ -43,7 +43,7 @@ const mediator = {
   },
 
   // states
-  workinProgrssPath: "",
+  workInProgrssingPath: "",
   successFileMessages: new Set(),
   failurePaths: new Set(),
   importSpecifierNameSet: new Set(),
@@ -84,10 +84,17 @@ const mediator = {
       );
     }
   },
-  printDivider: function () {
-    console.log();
-    console.log(Array.from({ length: 106 }, () => "#").join(""));
-    console.log();
+  printDivider: function (...contents) {
+    if (contents?.length) {
+      console.log(Array.from({ length: 106 }, () => "#").join(""));
+      console.log(...contents);
+      console.log(Array.from({ length: 106 }, () => "#").join(""));
+    } else {
+      console.log();
+      console.log(Array.from({ length: 106 }, () => "#").join(""));
+      console.log();
+    }
+    return this._safeExit();
   },
   printTransformed: function (ast, code) {
     if (!this.__IS_PRINT_CODE__) return;
@@ -98,6 +105,7 @@ const mediator = {
     if (this.__IS_COPY_TO_CLIPBOARD__) {
       spawnSync("pbcopy", { input: formtedCode, encoding: "utf8" });
     }
+    this.printDivider(formtedCode);
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
@@ -186,10 +194,7 @@ const mediator = {
       } else {
         dirname = nodeJsPath.dirname(outputPath);
       }
-      if (!fs.existsSync(dirname)) {
-        fs.mkdirSync(dirname, { recursive: true });
-      }
-
+      if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true });
       fs.writeFileSync(outputPath, data, "utf-8");
       spawnSync("yarn", ["prettier", "-w", outputPath]);
     }
