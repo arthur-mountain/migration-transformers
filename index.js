@@ -1,14 +1,21 @@
+#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import nodeJsPath from "node:path";
+import pc from "picocolors";
 // import prettier from 'prettier'
 import parser from "@babel/parser";
 import traverse from "@babel/traverse";
 import generate from "@babel/generator";
 import t from "@babel/types";
 import { inspect } from "./inspect.js";
-import { parseArgs } from "./parse-args.js";
+import { initProgram } from "./init-program.js";
 import { resolveAliasPath, getPathInfo } from "./resolve-path.js";
+
+const handleSigTerm = () => process.exit(0);
+
+process.on("SIGINT", handleSigTerm);
+process.on("SIGTERM", handleSigTerm);
 
 const Stack = {
   stack: [],
@@ -19,11 +26,10 @@ const Stack = {
 };
 
 const mediator = {
-  // FIXME: 👇dynamic👇
+  __ENABLED__: 0,
+  __DESTINATION_PATH__: "", // destination path; TODO: what should do after transformed, write local file path for test.
   __DEBUG__: 0, // if debug is enabled, rewrite destination to current folder and not write any traversed records.
-  __DESTINATION_PATH__: "", // destination path;
-  __START_PATHS__: [],
-  // FIXME: 👆dynamic👆
+  __START_PATHS__: [], // the file paths should be traversed
   __IS_WRITE_FILE__: 0, // IO side effects, write file or not
   __IS_RECURSIVE__: 0, //  recursively traverse dependencies or not
   __IS_PRINT_CODE__: 0, // print source code or not
@@ -43,13 +49,14 @@ const mediator = {
   },
 
   // states
-  workInProgrssingPath: "",
-  successFileMessages: new Set(),
-  failurePaths: new Set(),
-  importSpecifierNameSet: new Set(),
-  handledFilePathSet: new Set(),
-  initialHandledFilePathSet: null,
-  cachedProgramPath: null,
+  workInProgrssingPath: "", // current working path
+  successFileMessages: new Set(), // successfully traversed and formatted files
+  failurePaths: new Set(), // failures traversed or formatted files
+  importSpecifierNameSet: new Set(), // import specifier names, TODO: check the better implementation instead of manually tracking it
+  handledFilePathSet: new Set(), // successfully handled file paths
+  initialHandledFilePathSet: null, // initial handled file paths from handled-files.json that written before
+  cachedProgramPath: null, // program path of AST
+  cmdProgram: null, // commander program
 
   // methods
   init: function () {
@@ -57,8 +64,11 @@ const mediator = {
     this.initialHandledFilePathSet = fs.existsSync("handled-files.json")
       ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
       : new Set();
-    Object.entries(parseArgs()).forEach(([key, value]) => {
-      this[key] = value;
+    this.cmdProgram = initProgram(this);
+    Object.entries(this).forEach(([key, value]) => {
+      if (key.startsWith("__")) {
+        console.log(key, value);
+      }
     });
   },
   getProgramPath: function (path) {
@@ -72,14 +82,14 @@ const mediator = {
     if (this.successFileMessages.size) {
       console.log(
         [...this.successFileMessages]
-          .map((file) => `\x1b[32m✔ \x1b[0m${file}`)
+          .map((file) => `${pc.green("✔")} ${pc.bold(file)}`)
           .join("\n"),
       );
     }
     if (this.failurePaths.size) {
       console.log(
         [...this.successFileMessages]
-          .map((file) => `\x1b[31m✖ \x1b[0m${file}`)
+          .map((file) => `${pc.red("✖")} ${pc.bold(file)}`)
           .join("\n"),
       );
     }
@@ -140,10 +150,10 @@ const mediator = {
       this.failurePaths.add(
         this._generateMessage(
           "failed format file with path:",
-          `\x1b[31m${this.workinProgrssPath}\x1b[0m`,
+          `${pc.red(pc.bold(this.workinProgrssPath))}`,
         ),
       );
-      console.error("stderr", stderr);
+      console.error("prettier stderr: ", pc.red(stderr));
     }
     return isFailed ? code : stdout;
   },
@@ -201,7 +211,7 @@ const mediator = {
     this.successFileMessages.add(
       this._generateMessage(
         "writes file succussfully with path:",
-        `\x1b[32m${outputPath}\x1b[0m`,
+        `${pc.green(pc.bold(outputPath))}`,
       ),
     );
   },
@@ -227,7 +237,7 @@ const mediator = {
     this.successFileMessages.add(
       this._generateMessage(
         "copy file succussfully with path:",
-        `\x1b[32m${outputPath}\x1b[0m`,
+        `${pc.green(pc.bold(outputPath))}`,
       ),
     );
   },
@@ -351,7 +361,7 @@ const visitor = {
   Program: {
     enter: () => {
       console.log(
-        `🚀 strated path: \x1b[32m${mediator.workInProgrssingPath}\x1b[0m`,
+        `🚀 strated path: ${pc.green(pc.bold(mediator.workInProgrssingPath))}`,
       );
     },
   },
@@ -1102,10 +1112,12 @@ const transformFile = (filePaths = []) => {
 
 try {
   mediator.init();
-  transformFile(mediator.__START_PATHS__);
-  mediator.writeHandledPaths();
-  mediator.printDivider();
-  mediator.printResults();
+  if (mediator.__ENABLED__) {
+    transformFile(mediator.__START_PATHS__);
+    mediator.writeHandledPaths();
+    mediator.printDivider();
+    mediator.printResults();
+  }
 } catch (error) {
   console.error(error);
 }
