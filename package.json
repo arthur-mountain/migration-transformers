@@ -4,6 +4,9 @@
   "version": "0.0.1",
   "description": "The CLI to transform source code to another",
   "main": "index.js",
+  "scripts": {
+    "dev": "node index.js"
+  },
   "devDependencies": {
     "@babel/generator": "^7.24.5",
     "@babel/parser": "^7.24.5",
@@ -11,7 +14,6 @@
     "@babel/types": "^7.24.5",
     "commander": "^12.1.0",
     "picocolors": "^1.0.1",
-    "prettier": "^3.2.5",
-    "prompts": "^2.4.2"
+    "prettier": "^3.2.5"
   }
 }
