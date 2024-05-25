@@ -1,14 +1,17 @@
 {
   "name": "migration-transformers",
   "type": "module",
-  "version": "1.0.0",
-  "description": "MY AST practicing",
+  "version": "0.0.1",
+  "description": "The CLI to transform source code to another",
   "main": "index.js",
   "devDependencies": {
     "@babel/generator": "^7.24.5",
     "@babel/parser": "^7.24.5",
     "@babel/traverse": "^7.24.5",
     "@babel/types": "^7.24.5",
-    "prettier": "^3.2.5"
+    "commander": "^12.1.0",
+    "picocolors": "^1.0.1",
+    "prettier": "^3.2.5",
+    "prompts": "^2.4.2"
   }
 }
