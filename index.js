@@ -1130,3 +1130,4 @@ try {
 //   10. Check `path.key` and `path.type` and `path.listKey` for current path seems more directly.
 //   11. Using state commonly that sharing global data in traverse journey.
 //   12. Using Hub build error, ...etc.
+//   13. Using '|' could processing multiple Node in a visitor key, such as 'VariableDeclaration|FunctionDeclaration'
