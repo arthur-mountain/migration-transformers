@@ -58,15 +58,14 @@ const context = {
   successFileMessageSet: new Set(), // successfully traversed and formatted files
   failureFileMessageSet: new Set(), // failures traversed or formatted files
   importSpecifierNameSet: new Set(), // import specifier names, TODO: check the better implementation instead of manually tracking it
-  handledFilePathSet: new Set(), // successfully handled file paths
-  initialHandledFilePathSet: null, // initial handled file paths from handled-files.json that written before
-  cachedProgramPath: null, // program path of AST
-  cmdProgram: null, // commander program
+  handledFilePathSet: null, // successfully handled file paths. (lazy init)
+  cachedProgramPath: null, // program path of AST. (lazy init)
+  cmdProgram: null, // commander program. (lazy init)
 
   // methods
   init: function () {
     this._generateUUID = this._generateUUID();
-    this.initialHandledFilePathSet =
+    this.handledFilePathSet =
       !this.__IGNORE_CACHE__ && fs.existsSync("handled-files.json")
         ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
         : new Set();
@@ -130,13 +129,13 @@ const context = {
       this.handledFilePathSet.add(this.workInProgressingPath);
       return true;
     }
-    const isAllowedTraversal = !this.initialHandledFilePathSet.has(
+    const isNotHandled = !this.handledFilePathSet.has(
       this.workInProgressingPath,
     );
-    if (isAllowedTraversal) {
+    if (isNotHandled) {
       this.handledFilePathSet.add(this.workInProgressingPath);
     }
-    return isAllowedTraversal;
+    return isNotHandled;
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
@@ -169,13 +168,14 @@ const context = {
     return fs.readFileSync(filePath, "utf-8");
   },
   writeHandledPaths: function () {
-    if (!this.__DEBUG__ && this.handledFilePathSet.size) {
+    if (
+      !this.__DEBUG__ &&
+      !this.__IGNORE_CACHE__ &&
+      this.handledFilePathSet.size
+    ) {
       this.customWriteFile(
         "handled-files.json",
-        JSON.stringify([
-          ...this.initialHandledFilePathSet,
-          ...this.handledFilePathSet,
-        ]),
+        JSON.stringify([...this.handledFilePathSet]),
       );
     }
   },
