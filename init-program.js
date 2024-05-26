@@ -78,6 +78,7 @@ const initProgramCommand = (context) => {
     ["ignoreCache", ["__IGNORE_CACHE__"]],
   ]);
 
+  let hasModeCommand = 0;
   Object.entries(program.opts()).forEach(([key, value]) => {
     const contextKeys = COMMAND_MAPPING.get(key);
     if (!contextKeys || !value) return;
@@ -87,6 +88,7 @@ const initProgramCommand = (context) => {
           const isProd = ["prod", "production"].includes(value);
           context[contextKey] = isProd ? 0 : 1;
           if (isProd) context.__IS_WRITE_FILE__ = 1;
+          hasModeCommand = 1;
           break;
         }
         default:
@@ -95,6 +97,8 @@ const initProgramCommand = (context) => {
       }
     });
   });
+
+  if (!hasModeCommand) context.__DEBUG__ = 1;
 
   const pathsArgIndex = program.registeredArguments.findIndex(
     (registeredArg) => registeredArg.name() === "paths",
