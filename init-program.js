@@ -35,8 +35,8 @@ const validate = (from, to, paths, option, command) => {
     }
   } catch (error) {
     console.error(pc.red(error.message) + "\n");
-    command.outputHelp();
     process.exit(1);
+    command.outputHelp();
   }
 };
 
@@ -58,6 +58,7 @@ const initProgramCommand = (context) => {
     .option("--ast", "write to destination before/after AST be traversed")
     .option("--ast-before", "write to destination before AST be traversed")
     .option("--ast-after", "write to destination after AST be traversed")
+    .option("--ignore-cache", "ignore the traversed files from cache")
     // TODO: Add more options
     // .option("-ext, --extension <ext...>", "the extensions of files")
     // .option("-iext, --igore-extension <iext...>", "the extensions of ignore files")
@@ -74,6 +75,7 @@ const initProgramCommand = (context) => {
     ["ast", ["__AST_DESTINATION__", "__TRANSFORMED_AST_DESTINATION__"]],
     ["astBefore", ["__AST_DESTINATION__"]],
     ["astAfter", ["__TRANSFORMED_AST_DESTINATION__"]],
+    ["ignoreCache", ["__IGNORE_CACHE__"]],
   ]);
 
   Object.entries(program.opts()).forEach(([key, value]) => {

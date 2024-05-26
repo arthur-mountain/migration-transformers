@@ -37,6 +37,7 @@ const context = {
   __AST_DESTINATION__: 0, // save ast before traverse or not
   __TRANSFORMED_AST_DESTINATION__: 0, // save ast after traverse or not
   __PARSER_PLUGINS__: ["jsx", "typescript", "dynamicImport"], // parser plugins
+  __IGNORE_CACHE__: 0, // ignore cache(handled files) or not
   _generateMessage: function (...args) {
     return [
       this.__IS_WRITE_FILE__ ? (this.__DEBUG__ ? "(debug)" : "") : "(dev)",
@@ -46,6 +47,10 @@ const context = {
   _generateUUID: function () {
     let id = 0;
     return () => id++;
+  },
+  _getPaths: function () {
+    // FIXME: should be implemented
+    return resolveAliasPath("");
   },
 
   // states
@@ -111,6 +116,23 @@ const context = {
     this.printDivider(
       `current path: ${pc.green(pc.bold(this.workInProgressingPath))},\n ${formattedCode}`,
     );
+  },
+  getTraversePath: function (paths) {
+    const fullPaths = this._getPaths(paths);
+    if (!fullPaths?.length) return;
+    this.workInProgressingPath = fullPaths.shift();
+    if (fullPaths.length) Stack.push(...fullPaths);
+    return this.workInProgressingPath;
+  },
+  checkIsAllowedTraversal: function () {
+    if (this.__IGNORE_CACHE__) return false;
+    const isAllowedTraversal = !this.initialHandledFilePathSet.has(
+      this.workInProgressingPath,
+    );
+    if (isAllowedTraversal) {
+      this.handledFilePathSet.add(this.workInProgressingPath);
+    }
+    return isAllowedTraversal;
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
@@ -1060,22 +1082,12 @@ const transformFile = (filePaths = []) => {
   Stack.push(...filePaths);
 
   while (Stack.size()) {
-    const fullPaths = mediator.getPaths(Stack.pop());
-    if (!fullPaths?.length) continue;
+    const fullPath = mediator.getTraversePath(Stack.pop());
 
-    mediator.workInProgressingPath = fullPaths.shift();
-
-    if (fullPaths.length) Stack.push(...fullPaths);
-
-    if (
-      mediator.initialHandledFilePathSet.has(mediator.workInProgressingPath)
-    ) {
-      continue;
-    }
-    mediator.handledFilePathSet.add(mediator.workInProgressingPath);
+    if (!mediator.checkIsAllowedTraversal()) continue;
 
     // Get file path info, and traverse ast
-    const pathInfo = getPathInfo(mediator.workInProgressingPath);
+    const pathInfo = getPathInfo(fullPath);
     const { code, ast, isASTReParsed } = getAst(pathInfo, true) || {};
     if (!ast) continue;
     traverse.default(ast, visitor);
