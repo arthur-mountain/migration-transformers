@@ -77,8 +77,8 @@ const getPathInfo = (fullPath) => {
     .split("/")
     .map((p, i, o) => {
       if (p.startsWith(":")) {
-        const key = o[i - 1].endsWith("s") ? o[i - 1].slice(0, -1) : "id";
-        return `[${key}]`;
+        const prefix = o[i - 1].endsWith("s") ? o[i - 1].slice(0, -1) : "";
+        return `[${prefix}Id]`;
       }
     })
     .join("/");
