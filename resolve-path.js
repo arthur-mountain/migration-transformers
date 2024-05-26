@@ -23,8 +23,17 @@ const resolveAliasPath = (tsConfigPath) => {
   ]);
 
   return (inputPath) => {
+    const isStringPath = typeof inputPath === "string";
+
+    // FIXME: this is workaround for removed the path that replaced with alias or base path
+    // otherwise the base path add twice at beginning of the path
+    if (isStringPath && inputPath.startsWith(`${BASE_PATH}/src/`)) {
+      return [inputPath];
+    }
+
+    // Find the last founded alias
     let lastFoundedAlias;
-    if (typeof inputPath === "string") {
+    if (isStringPath) {
       aliasPath.forEach(([alias, mappingPath]) => {
         if (inputPath.startsWith(alias))
           lastFoundedAlias = [alias, mappingPath];
@@ -59,11 +68,7 @@ const resolveAliasPath = (tsConfigPath) => {
     });
 
     // Ignore third party packages that may not exist after we're processing at the above steps
-    // FIXME: this is workaround for removed the path that replaced with alias or base path
-    // otherwise the base path add twice at beginning of the path
-    return paths.length
-      ? paths.map((p, i) => (i ? p.replace(BASE_PATH + "/src/", "") : p))
-      : null;
+    return paths.length ? paths : null;
   };
 };
 
