@@ -1096,6 +1096,9 @@ const transformFile = (filePaths = []) => {
     if (!ast) continue;
     traverse.default(ast, visitor);
     mediator.printTransformed(ast, code);
+
+    // FIXME: should not io operation in traverse, needs to be refactored in the future
+    // Save task cb to async queue, and execute it in the end of traverse
     mediator.writeASTJson(
       "post",
       `traversed-asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`,
