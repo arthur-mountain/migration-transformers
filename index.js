@@ -139,6 +139,7 @@ const context = {
   },
   addDependencyPath: function (path) {
     if (!this.__IS_RECURSIVE__) return;
+    if (/.*\.test\.*/.test(this.workInProgressingPath)) return;
     if (/^\./.test(path)) {
       Stack.push([nodeJsPath.dirname(this.workInProgressingPath), path]);
     } else if (/^@\//.test(path)) {
