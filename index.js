@@ -38,6 +38,7 @@ const context = {
   __TRANSFORMED_AST_DESTINATION__: 0, // save ast after traverse or not
   __PARSER_PLUGINS__: ["jsx", "typescript", "dynamicImport"], // parser plugins
   __IGNORE_CACHE__: 0, // ignore cache(handled files) or not
+  _tasks: [], // message queue for write file(s) that be transformed or ast
   _generateMessage: function (...args) {
     return [
       this.__IS_WRITE_FILE__ ? (this.__DEBUG__ ? "(debug)" : "") : "(dev)",
@@ -212,16 +213,27 @@ const context = {
       } else {
         dirname = nodeJsPath.dirname(outputPath);
       }
-      if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true });
-      fs.writeFileSync(outputPath, data, "utf-8");
-      spawnSync("yarn", ["prettier", "-w", outputPath]);
     }
-    this.successFileMessageSet.add(
-      this._generateMessage(
-        "writes file succussfully with path:",
-        pc.green(pc.bold(outputPath)),
-      ),
-    );
+
+    if (dirname && outputPath) {
+      this._tasks.push({
+        type: "write",
+        name: outputPath,
+        cb: () => {
+          if (!fs.existsSync(dirname)) {
+            fs.mkdirSync(dirname, { recursive: true });
+          }
+          fs.writeFileSync(outputPath, data, "utf-8");
+          spawnSync("yarn", ["prettier", "-w", outputPath]);
+          this.successFileMessageSet.add(
+            this._generateMessage(
+              "writes file succussfully with path:",
+              pc.green(pc.bold(outputPath)),
+            ),
+          );
+        },
+      });
+    }
   },
   customCopyFile: function (
     from,
@@ -239,14 +251,31 @@ const context = {
     } else {
       dirname = nodeJsPath.dirname(outputPath);
     }
-    if (!fs.existsSync(dirname)) fs.mkdirSync(dirname, { recursive: true });
-    fs.copyFileSync(from, outputPath, flags);
-    this.successFileMessageSet.add(
-      this._generateMessage(
-        "copy file succussfully with path:",
-        pc.green(pc.bold(outputPath)),
-      ),
-    );
+
+    if (dirname && outputPath) {
+      this._tasks.push({
+        type: "copy",
+        name: outputPath,
+        cb: () => {
+          if (!fs.existsSync(dirname)) {
+            fs.mkdirSync(dirname, { recursive: true });
+          }
+          fs.copyFileSync(from, outputPath, flags);
+          this.successFileMessageSet.add(
+            this._generateMessage(
+              "copy file succussfully with path:",
+              pc.green(pc.bold(outputPath)),
+            ),
+          );
+        },
+      });
+    }
+  },
+  executeTasks: function () {
+    if (!this._tasks.length) return;
+    console.log(pc.green(pc.bold("starting write file(s)")));
+    this._tasks.forEach((task) => task.cb());
+    this.printResults();
   },
 };
 
@@ -1094,9 +1123,6 @@ const transformFile = (filePaths = []) => {
     if (!ast) continue;
     traverse.default(ast, visitor);
     mediator.printTransformed(ast, code);
-
-    // FIXME: should not io operation in traverse, needs to be refactored in the future
-    // Save task cb to async queue, and execute it in the end of traverse
     mediator.writeASTJson(
       "post",
       `traversed-asts/${pathInfo.outputPath}/${pathInfo.fileName}.json`,
@@ -1117,8 +1143,8 @@ try {
   if (mediator.__ENABLED__) {
     transformFile(mediator.__START_PATHS__);
     mediator.writeHandledPaths();
+    mediator.executeTasks();
     mediator.printDivider();
-    mediator.printResults();
   }
 } catch (error) {
   console.error(error);
