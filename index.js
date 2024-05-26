@@ -58,18 +58,19 @@ const context = {
   successFileMessageSet: new Set(), // successfully traversed and formatted files
   failureFileMessageSet: new Set(), // failures traversed or formatted files
   importSpecifierNameSet: new Set(), // import specifier names, TODO: check the better implementation instead of manually tracking it
-  handledFilePathSet: null, // successfully handled file paths. (lazy init)
+  workInProgressedPathSet: null, // successfully handled file paths. (lazy init)
   cachedProgramPath: null, // program path of AST. (lazy init)
   cmdProgram: null, // commander program. (lazy init)
 
   // methods
   init: function () {
     this._generateUUID = this._generateUUID();
-    this.handledFilePathSet =
-      !this.__IGNORE_CACHE__ && fs.existsSync("handled-files.json")
+    this.cmdProgram = initProgramCommand(this);
+    this.workInProgressedPathSet = this.__IGNORE_CACHE__
+      ? new Set()
+      : fs.existsSync("handled-files.json")
         ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
         : new Set();
-    this.cmdProgram = initProgramCommand(this);
   },
   getProgramPath: function (path) {
     // path.scope.getProgramParent().path
@@ -125,15 +126,11 @@ const context = {
     return this.workInProgressingPath;
   },
   checkIsAllowedTraversal: function () {
-    if (this.__IGNORE_CACHE__) {
-      this.handledFilePathSet.add(this.workInProgressingPath);
-      return true;
-    }
-    const isNotHandled = !this.handledFilePathSet.has(
+    const isNotHandled = !this.workInProgressedPathSet.has(
       this.workInProgressingPath,
     );
     if (isNotHandled) {
-      this.handledFilePathSet.add(this.workInProgressingPath);
+      this.workInProgressedPathSet.add(this.workInProgressingPath);
     }
     return isNotHandled;
   },
@@ -172,11 +169,11 @@ const context = {
     if (
       !this.__DEBUG__ &&
       !this.__IGNORE_CACHE__ &&
-      this.handledFilePathSet.size
+      this.workInProgressedPathSet.size
     ) {
       this.customWriteFile(
         "handled-files.json",
-        JSON.stringify([...this.handledFilePathSet]),
+        JSON.stringify([...this.workInProgressedPathSet]),
       );
     }
   },
