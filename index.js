@@ -66,9 +66,10 @@ const context = {
   // methods
   init: function () {
     this._generateUUID = this._generateUUID();
-    this.initialHandledFilePathSet = fs.existsSync("handled-files.json")
-      ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
-      : new Set();
+    this.initialHandledFilePathSet =
+      !this.__IGNORE_CACHE__ && fs.existsSync("handled-files.json")
+        ? new Set(JSON.parse(this.customReadFile("handled-files.json")))
+        : new Set();
     this.cmdProgram = initProgramCommand(this);
   },
   getProgramPath: function (path) {
@@ -125,7 +126,10 @@ const context = {
     return this.workInProgressingPath;
   },
   checkIsAllowedTraversal: function () {
-    if (this.__IGNORE_CACHE__) return false;
+    if (this.__IGNORE_CACHE__) {
+      this.handledFilePathSet.add(this.workInProgressingPath);
+      return true;
+    }
     const isAllowedTraversal = !this.initialHandledFilePathSet.has(
       this.workInProgressingPath,
     );
