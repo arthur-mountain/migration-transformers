@@ -81,9 +81,10 @@ const getPathInfo = (fullPath) => {
     .dirname(fullPath.replace(`${BASE_PATH}/src/`, ""))
     .split("/")
     .map((p, i, o) => {
+      // FIXME: This is Nextjs only shoyld separate it if implemented more transformers in the future
       if (p.startsWith(":")) {
         const prefix = o[i - 1].endsWith("s") ? o[i - 1].slice(0, -1) : "";
-        return `[${prefix}Id]`;
+        return prefix ? `[${prefix}Id]` : `[id]`;
       }
     })
     .join("/");
